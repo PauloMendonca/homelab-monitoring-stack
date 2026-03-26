@@ -1,0 +1,15 @@
+groups:
+  - name: pfsense-snmp-recording
+    interval: 30s
+    rules:
+      - record: pfsense_if_in_errors_total
+        expr: ifInErrors{job="pfsense-snmp"}
+
+      - record: pfsense_if_out_errors_total
+        expr: ifOutErrors{job="pfsense-snmp"}
+
+      - record: pfsense_if_in_discards_total
+        expr: ifInDiscards{job="pfsense-snmp"}
+
+      - record: pfsense_if_out_discards_total
+        expr: ifOutDiscards{job="pfsense-snmp"}

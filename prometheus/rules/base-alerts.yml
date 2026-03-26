@@ -1,0 +1,65 @@
+groups:
+  - name: infrastructure-base
+    rules:
+      - alert: TargetDown
+        expr: up{job!="pfsense-snmp"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Target indisponivel ({{ $labels.job }})"
+          description: "Target {{ $labels.instance }} esta down ha mais de 2 minutos."
+
+      - alert: ProbeFailed
+        expr: probe_success == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Probe falhou ({{ $labels.instance }})"
+          description: "O probe Blackbox para {{ $labels.instance }} falhou por mais de 2 minutos."
+
+      - alert: WanGatewayDown
+        expr: max by (gateway) (pfsense_gateway_up) == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway WAN down ({{ $labels.gateway }})"
+          description: "Gateway {{ $labels.gateway }} esta offline no pfSense."
+
+      - alert: WanPacketLossHigh
+        expr: pfsense_gateway_loss_percent > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Perda elevada no gateway ({{ $labels.gateway }})"
+          description: "Perda acima de 2% por mais de 5 minutos no gateway {{ $labels.gateway }}."
+
+      - alert: WanPacketLossCritical
+        expr: pfsense_gateway_loss_percent > 5
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Perda critica no gateway ({{ $labels.gateway }})"
+          description: "Perda acima de 5% por mais de 3 minutos no gateway {{ $labels.gateway }}."
+
+      - alert: WanLatencyHigh
+        expr: pfsense_gateway_delay_ms > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latencia WAN elevada ({{ $labels.gateway }})"
+          description: "Latencia acima de 100ms por mais de 10 minutos no gateway {{ $labels.gateway }}."
+
+      - alert: PrometheusConfigReloadFailed
+        expr: prometheus_config_last_reload_successful == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Falha no reload de configuracao do Prometheus"
+          description: "Prometheus nao conseguiu recarregar a configuracao."

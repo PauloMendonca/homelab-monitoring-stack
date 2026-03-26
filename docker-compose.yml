@@ -1,0 +1,161 @@
+services:
+  prometheus:
+    image: prom/prometheus:v2.53.4
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      - ./prometheus/targets:/etc/prometheus/targets:ro
+      - /mnt/pool_fast/db/monitoring/prometheus:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - monitoring
+    depends_on:
+      - alertmanager
+      - blackbox-exporter
+      - snmp-exporter
+      - pfsense-gateway-exporter
+
+  alertmanager:
+    image: quay.io/prometheus/alertmanager:v0.28.0
+    container_name: alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - /mnt/pool_fast/db/monitoring/alertmanager:/alertmanager
+    ports:
+      - "9093:9093"
+    networks:
+      - monitoring
+    depends_on:
+      - whatsapp-relay
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL}
+      - GF_USERS_DEFAULT_THEME=light
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+    volumes:
+      - /mnt/pool_fast/db/monitoring/grafana:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox_exporter/config.yml
+    cap_add:
+      - NET_RAW
+    volumes:
+      - ./blackbox/config.yml:/etc/blackbox_exporter/config.yml:ro
+    ports:
+      - "9115:9115"
+    networks:
+      - monitoring
+
+  snmp-exporter:
+    image: prom/snmp-exporter:v0.27.0
+    container_name: snmp-exporter
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+    volumes:
+      - ./snmp-exporter/snmp.yml:/etc/snmp_exporter/snmp.yml:ro
+    ports:
+      - "9116:9116"
+    networks:
+      - monitoring
+
+  pfsense-gateway-exporter:
+    build:
+      context: ./pfsense-exporter
+    container_name: pfsense-gateway-exporter
+    restart: unless-stopped
+    environment:
+      - PF_HOST=${PFSENSE_HOST}
+      - PF_USER=${PFSENSE_SSH_USER}
+      - PF_SSH_KEY_PATH=/run/secrets/pfsense_id_rsa
+      - PF_KNOWN_HOSTS_PATH=/run/secrets/known_hosts
+      - PF_GATEWAY_CMD=pfSsh.php playback gatewaystatus
+    volumes:
+      - ./secrets/pfsense_monitoring_rsa:/run/secrets/pfsense_id_rsa:ro
+      - ./secrets/known_hosts:/run/secrets/known_hosts:ro
+    expose:
+      - "9940"
+    networks:
+      - monitoring
+
+
+  pfsense-wan-guard:
+    build:
+      context: ./wan-guard
+    container_name: pfsense-wan-guard
+    restart: unless-stopped
+    environment:
+      - PROMETHEUS_URL=http://prometheus:9090
+      - POLL_INTERVAL_SECONDS=15
+      - DISABLE_LOSS_PERCENT=20
+      - DISABLE_FOR_SECONDS=30
+      - ENABLE_ZERO_LOSS_FOR_SECONDS=60
+      - COOLDOWN_SECONDS=300
+      - PREFERRED_WHEN_BOTH_BAD=WAN_VIVO_DHCP
+      - SECONDARY_WAN_NAME=WAN_VERO_DHCP
+      - WAN_INTERFACE_MAP=WAN_VIVO_DHCP:opt1,WAN_VERO_DHCP:wan
+      - PF_HOST=${PFSENSE_HOST}
+      - PF_USER=${PFSENSE_SSH_USER}
+      - PF_SSH_KEY_PATH=/run/secrets/pfsense_id_rsa
+      - PF_KNOWN_HOSTS_PATH=/run/secrets/known_hosts
+      - METRICS_PORT=9950
+    volumes:
+      - ./secrets/pfsense_monitoring_rsa:/run/secrets/pfsense_id_rsa:ro
+      - ./secrets/known_hosts:/run/secrets/known_hosts:ro
+    expose:
+      - "9950"
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+      - pfsense-gateway-exporter
+
+  whatsapp-relay:
+    build:
+      context: ./whatsapp-relay
+    container_name: whatsapp-relay
+    restart: unless-stopped
+    environment:
+      - EVOLUTION_BASE_URL=${EVOLUTION_BASE_URL}
+      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - WHATSAPP_TO=${WHATSAPP_TO}
+      - ALERT_SOURCE=${ALERT_SOURCE}
+    expose:
+      - "8080"
+    networks:
+      - monitoring
+
+networks:
+  monitoring:
+    driver: bridge

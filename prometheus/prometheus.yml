@@ -1,0 +1,184 @@
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+  external_labels:
+    site: homelab
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: blackbox-exporter
+    static_configs:
+      - targets: ["blackbox-exporter:9115"]
+
+  - job_name: snmp-exporter
+    static_configs:
+      - targets: ["snmp-exporter:9116"]
+
+  - job_name: pfsense-gateway
+    static_configs:
+      - targets: ["pfsense-gateway-exporter:9940"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+
+
+  - job_name: pfsense-wan-guard
+    static_configs:
+      - targets: [pfsense-wan-guard:9950]
+        labels:
+          role: wan-guard
+          device: pfsense
+
+  - job_name: pfsense-snmp
+    metrics_path: /snmp
+    params:
+      module: [if_mib]
+      auth: [public_v2]
+    static_configs:
+      - targets: ["10.10.10.1"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+          source: snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: pfsense-snmp-system
+    metrics_path: /snmp
+    params:
+      module: [ucd_system_stats]
+      auth: [public_v2]
+    static_configs:
+      - targets: ["10.10.10.1"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+          source: snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: pfsense-snmp-load
+    metrics_path: /snmp
+    params:
+      module: [ucd_la_table]
+      auth: [public_v2]
+    static_configs:
+      - targets: ["10.10.10.1"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+          source: snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: pfsense-snmp-memory
+    metrics_path: /snmp
+    params:
+      module: [ucd_memory]
+      auth: [public_v2]
+    static_configs:
+      - targets: ["10.10.10.1"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+          source: snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: pfsense-snmp-storage
+    metrics_path: /snmp
+    params:
+      module: [hrStorage]
+      auth: [public_v2]
+    static_configs:
+      - targets: ["10.10.10.1"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+          source: snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: pfsense-snmp-hrsystem
+    metrics_path: /snmp
+    params:
+      module: [hrSystem]
+      auth: [public_v2]
+    static_configs:
+      - targets: ["10.10.10.1"]
+        labels:
+          device: pfsense
+          role: edge-firewall
+          source: snmp
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: snmp-exporter:9116
+
+  - job_name: blackbox-icmp
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/icmp.yml"]
+        refresh_interval: 1m
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
+
+  - job_name: blackbox-http
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/http.yml"]
+        refresh_interval: 1m
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
