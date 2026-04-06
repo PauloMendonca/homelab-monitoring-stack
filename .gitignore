@@ -1,7 +1,16 @@
+# Plaintext secrets — NEVER commit
 .env
+.env.op
+.env.backup-plaintext
+
+# Protected files (SSH keys, certs)
 secrets/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# macOS
 .DS_Store
