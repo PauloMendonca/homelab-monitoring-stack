@@ -31,7 +31,10 @@ spec:
             - name: DATABASE_PROVIDER
               value: postgresql
             - name: DATABASE_CONNECTION_URI
-              value: postgresql://platform_admin:change-me-please@postgres.ai-platform.svc.cluster.local:5432/platform_ai?schema=public
+              valueFrom:
+                secretKeyRef:
+                  name: evolution-api-secrets
+                  key: DATABASE_CONNECTION_URI
             - name: DATABASE_CONNECTION_CLIENT_NAME
               value: evolution_homelab
             - name: CACHE_REDIS_ENABLED

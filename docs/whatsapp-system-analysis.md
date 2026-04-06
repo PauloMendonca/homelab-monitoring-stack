@@ -248,7 +248,7 @@ Ambos os caminhos convergem para uma API central (`notify-api`) que enfileira me
 homelab-monitoring | Alertmanager | 2026-03-29 12:00:00Z
 
 [FIRING] HighCPUUsage (critical)
-Instancia: 10.10.10.42:9100
+Instancia: 10.10.11.5:9100
 Inicio: 2026-03-29T11:55:00Z
 Resumo: CPU acima de 90% por 5 minutos
 Detalhe: O uso de CPU no node principal esta acima do limiar
@@ -561,7 +561,7 @@ Os Deployments referenciam imagens no registry local do MicroK8s:
 | notify-worker | `localhost:32000/notify-worker:v0.1`  |
 | notify-mcp    | `localhost:32000/notify-mcp:v0.2`     |
 
-Nao existe pipeline de CI/CD. O build e push devem ser feitos manualmente no no K8s (10.10.10.42). Sem as imagens no registry, os Pods ficariam em `ImagePullBackOff` mesmo que os manifests fossem aplicados.
+Nao existe pipeline de CI/CD. O build e push devem ser feitos manualmente no no K8s (10.10.11.5). Sem as imagens no registry, os Pods ficariam em `ImagePullBackOff` mesmo que os manifests fossem aplicados.
 
 ### Causas Secundarias
 
@@ -621,7 +621,7 @@ kubectl get applications -n argocd -o jsonpath='{.items[0].spec.source.repoURL}'
 #   argocd/notifications-infra-application.yaml   (linha 9)
 #   argocd/notifications-services-application.yaml (linha 9)
 # Trocar: ssh://git@your-gitops-repo
-# Por:    ssh://git@10.10.10.42/home/paulo/gitops-bare.git  (ou o valor encontrado)
+# Por:    ssh://git@10.10.11.5/home/paulo/gitops-bare.git  (ou o valor encontrado)
 ```
 
 - [ ] `notifications-infra-application.yaml` — repoURL corrigido
@@ -629,7 +629,7 @@ kubectl get applications -n argocd -o jsonpath='{.items[0].spec.source.repoURL}'
 
 ### Passo 2 — Buildar e pushar imagens Docker
 
-Executar no no K8s (10.10.10.42), onde o registry `localhost:32000` esta acessivel:
+Executar no no K8s (10.10.11.5), onde o registry `localhost:32000` esta acessivel:
 
 ```bash
 cd /home/paulo/workspace/monitoring-stack
