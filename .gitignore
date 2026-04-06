@@ -6,6 +6,9 @@
 # Protected files (SSH keys, certs)
 secrets/
 
+# pfSense config backups contain live credentials
+backups/
+
 # Python
 __pycache__/
 *.pyc

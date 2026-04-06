@@ -41,13 +41,20 @@ def _build_message(payload):
     return "\\n\\n".join(chunks)
 
 
-def _send_whatsapp(message):
+def _parse_numbers(raw):
+    if not raw:
+        return []
+    return [number.strip() for number in raw.split(",") if number.strip()]
+
+
+def _send_whatsapp(message, numbers=None):
     base_url = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
     instance = os.getenv("EVOLUTION_INSTANCE", "")
     api_key = os.getenv("EVOLUTION_API_KEY", "")
-    number = os.getenv("WHATSAPP_TO", "")
+    default_numbers = _parse_numbers(os.getenv("WHATSAPP_TO", ""))
+    target_numbers = numbers or default_numbers
 
-    if not all([base_url, instance, api_key, number]):
+    if not all([base_url, instance, api_key]) or not target_numbers:
         logger.warning("Relay not configured: missing Evolution vars")
         return False, "relay_not_configured"
 
@@ -56,22 +63,28 @@ def _send_whatsapp(message):
         "apikey": api_key,
         "Content-Type": "application/json",
     }
-    payload = {
-        "number": number,
-        "text": message,
-    }
+    for number in target_numbers:
+        payload = {
+            "number": number,
+            "text": message,
+        }
 
-    try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=15)
-    except requests.RequestException as exc:
-        logger.error("Evolution request failed: %s", exc)
-        return False, "evolution_request_error"
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=15)
+        except requests.RequestException as exc:
+            logger.error("Evolution request failed (%s): %s", number, exc)
+            return False, "evolution_request_error"
 
-    if resp.status_code >= 300:
-        logger.error("Evolution returned HTTP %s: %s", resp.status_code, resp.text[:200])
-        return False, f"evolution_http_{resp.status_code}"
+        if resp.status_code >= 300:
+            logger.error(
+                "Evolution returned HTTP %s for %s: %s",
+                resp.status_code,
+                number,
+                resp.text[:200],
+            )
+            return False, f"evolution_http_{resp.status_code}"
 
-    logger.info("WhatsApp notification sent")
+    logger.info("WhatsApp notification sent to %d recipients", len(target_numbers))
     return True, "ok"
 
 
@@ -85,8 +98,9 @@ def alertmanager_webhook():
     payload = request.get_json(silent=True) or {}
     alerts = payload.get("alerts", [])
     logger.info("Received alert batch with %d alerts", len(alerts))
+    requested_numbers = _parse_numbers(request.args.get("to", ""))
     message = _build_message(payload)
-    ok, reason = _send_whatsapp(message)
+    ok, reason = _send_whatsapp(message, requested_numbers)
     code = 200 if ok else 202
     return jsonify({"sent": ok, "reason": reason}), code
 

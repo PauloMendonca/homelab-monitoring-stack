@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evolution-api
+  namespace: ai-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: evolution-api
+  template:
+    metadata:
+      labels:
+        app: evolution-api
+    spec:
+      containers:
+        - name: evolution-api
+          image: evoapicloud/evolution-api:v2.3.7
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SERVER_TYPE
+              value: http
+            - name: SERVER_PORT
+              value: "8080"
+            - name: SERVER_URL
+              value: http://evolution-api.ai-platform.svc.cluster.local:8080
+            - name: DATABASE_ENABLED
+              value: "true"
+            - name: DATABASE_PROVIDER
+              value: postgresql
+            - name: DATABASE_CONNECTION_URI
+              value: postgresql://platform_admin:change-me-please@postgres.ai-platform.svc.cluster.local:5432/platform_ai?schema=public
+            - name: DATABASE_CONNECTION_CLIENT_NAME
+              value: evolution_homelab
+            - name: CACHE_REDIS_ENABLED
+              value: "true"
+            - name: CACHE_REDIS_URI
+              value: redis://redis-notify:6379/6
+            - name: CACHE_REDIS_PREFIX_KEY
+              value: evolution
+            - name: CACHE_LOCAL_ENABLED
+              value: "false"
+            - name: AUTHENTICATION_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: evolution-api-secrets
+                  key: AUTHENTICATION_API_KEY
+          volumeMounts:
+            - name: instances
+              mountPath: /evolution/instances
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 200m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: instances
+          persistentVolumeClaim:
+            claimName: evolution-instances

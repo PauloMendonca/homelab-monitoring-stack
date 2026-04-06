@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - notify-configmap.yaml
+  - notify-api-deployment.yaml
+  - notify-api-service.yaml
+  - notify-worker-deployment.yaml
+  - notify-mcp-deployment.yaml
+  - notify-mcp-service.yaml

@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notify-mcp
+  namespace: ai-platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notify-mcp
+  template:
+    metadata:
+      labels:
+        app: notify-mcp
+    spec:
+      containers:
+        - name: notify-mcp
+          image: localhost:32000/notify-mcp:v0.3
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NOTIFY_API_URL
+              value: http://notify-api.ai-platform.svc.cluster.local:8080
+            - name: NOTIFY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: notify-api-secrets
+                  key: NOTIFY_API_KEY
+          ports:
+            - containerPort: 8000
+              name: http
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi

@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: notifications-services
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ssh://git@your-gitops-repo
+    targetRevision: main
+    path: k8s/notifications/services
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-platform
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

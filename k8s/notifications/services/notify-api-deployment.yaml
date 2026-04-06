@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notify-api
+  namespace: ai-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: notify-api
+  template:
+    metadata:
+      labels:
+        app: notify-api
+    spec:
+      containers:
+        - name: notify-api
+          image: localhost:32000/notify-api:v0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: notify-config
+          env:
+            - name: NOTIFY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: notify-api-secrets
+                  key: NOTIFY_API_KEY
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 8
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi

@@ -5,7 +5,7 @@ groups:
         expr: up{job!="pfsense-snmp"} == 0
         for: 2m
         labels:
-          severity: critical
+          severity: important
         annotations:
           summary: "Target indisponivel ({{ $labels.job }})"
           description: "Target {{ $labels.instance }} esta down ha mais de 2 minutos."
@@ -14,52 +14,86 @@ groups:
         expr: probe_success == 0
         for: 2m
         labels:
-          severity: critical
+          severity: important
         annotations:
           summary: "Probe falhou ({{ $labels.instance }})"
           description: "O probe Blackbox para {{ $labels.instance }} falhou por mais de 2 minutos."
 
       - alert: WanGatewayDown
-        expr: max by (gateway) (pfsense_gateway_up) == 0
-        for: 1m
+        expr: max by (gateway) (pfsense_gateway_up{gateway=~"WAN_VERO_DHCP|WAN_VIVO_DHCP|WAN_NETMINAS_DHCP|WAN_VALENET_DHCP"}) == 0
+        for: 2m
         labels:
           severity: critical
+          wan: '{{ $labels.gateway }}'
         annotations:
           summary: "Gateway WAN down ({{ $labels.gateway }})"
           description: "Gateway {{ $labels.gateway }} esta offline no pfSense."
 
       - alert: WanPacketLossHigh
-        expr: pfsense_gateway_loss_percent > 2
+        expr: pfsense_gateway_loss_percent{gateway=~"WAN_VERO_DHCP|WAN_VIVO_DHCP|WAN_NETMINAS_DHCP|WAN_VALENET_DHCP"} > 10
         for: 5m
         labels:
-          severity: warning
+          severity: important
+          wan: '{{ $labels.gateway }}'
         annotations:
           summary: "Perda elevada no gateway ({{ $labels.gateway }})"
-          description: "Perda acima de 2% por mais de 5 minutos no gateway {{ $labels.gateway }}."
-
-      - alert: WanPacketLossCritical
-        expr: pfsense_gateway_loss_percent > 5
-        for: 3m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Perda critica no gateway ({{ $labels.gateway }})"
-          description: "Perda acima de 5% por mais de 3 minutos no gateway {{ $labels.gateway }}."
+          description: "Perda acima de 10% por mais de 5 minutos no gateway {{ $labels.gateway }}."
 
       - alert: WanLatencyHigh
-        expr: pfsense_gateway_delay_ms > 100
+        expr: pfsense_gateway_delay_ms{gateway=~"WAN_VERO_DHCP|WAN_VIVO_DHCP|WAN_NETMINAS_DHCP|WAN_VALENET_DHCP"} > 120
         for: 10m
         labels:
-          severity: warning
+          severity: important
+          wan: '{{ $labels.gateway }}'
         annotations:
           summary: "Latencia WAN elevada ({{ $labels.gateway }})"
-          description: "Latencia acima de 100ms por mais de 10 minutos no gateway {{ $labels.gateway }}."
+          description: "Latencia acima de 120ms por mais de 10 minutos no gateway {{ $labels.gateway }}."
+
+      - alert: PfSenseCPUHighImportant
+        expr: (100 - ssCpuIdle{job="pfsense-snmp-system"}) > 80
+        for: 10m
+        labels:
+          severity: important
+          wan: LAN
+        annotations:
+          summary: "CPU alta no pfSense"
+          description: "CPU acima de 80% por mais de 10 minutos no pfSense."
+
+      - alert: PfSenseCPUHighCritical
+        expr: (100 - ssCpuIdle{job="pfsense-snmp-system"}) > 90
+        for: 2m
+        labels:
+          severity: critical
+          wan: LAN
+        annotations:
+          summary: "CPU critica no pfSense"
+          description: "CPU acima de 90% por mais de 2 minutos no pfSense."
+
+      - alert: PfSenseMemoryHighImportant
+        expr: (1 - (memAvailReal{job="pfsense-snmp-memory"} / memTotalReal{job="pfsense-snmp-memory"})) * 100 > 80
+        for: 10m
+        labels:
+          severity: important
+          wan: LAN
+        annotations:
+          summary: "Memoria alta no pfSense"
+          description: "Uso de memoria acima de 80% por mais de 10 minutos no pfSense."
+
+      - alert: PfSenseMemoryHighCritical
+        expr: (1 - (memAvailReal{job="pfsense-snmp-memory"} / memTotalReal{job="pfsense-snmp-memory"})) * 100 > 90
+        for: 2m
+        labels:
+          severity: critical
+          wan: LAN
+        annotations:
+          summary: "Memoria critica no pfSense"
+          description: "Uso de memoria acima de 90% por mais de 2 minutos no pfSense."
 
       - alert: PrometheusConfigReloadFailed
         expr: prometheus_config_last_reload_successful == 0
         for: 2m
         labels:
-          severity: warning
+          severity: important
         annotations:
           summary: "Falha no reload de configuracao do Prometheus"
           description: "Prometheus nao conseguiu recarregar a configuracao."

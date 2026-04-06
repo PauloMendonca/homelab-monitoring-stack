@@ -20,6 +20,7 @@ services:
     depends_on:
       - alertmanager
       - blackbox-exporter
+      - cadvisor
       - snmp-exporter
       - pfsense-gateway-exporter
 
@@ -37,8 +38,6 @@ services:
       - "9093:9093"
     networks:
       - monitoring
-    depends_on:
-      - whatsapp-relay
 
   grafana:
     image: grafana/grafana:11.5.2
@@ -61,6 +60,36 @@ services:
     depends_on:
       - prometheus
 
+  grafana-mcp:
+    profiles:
+      - mcp
+    image: grafana/mcp-grafana:${GRAFANA_MCP_IMAGE_TAG:-0.11.4}
+    container_name: grafana-mcp
+    restart: unless-stopped
+    command:
+      - -t
+      - streamable-http
+      - --address
+      - 0.0.0.0:8000
+      - --endpoint-path
+      - /mcp
+      - --metrics
+      - --metrics-address
+      - :9090
+      - --disable-write
+    environment:
+      - GRAFANA_URL=${GRAFANA_MCP_GRAFANA_URL:-http://grafana:3000}
+      - GRAFANA_SERVICE_ACCOUNT_TOKEN=${GRAFANA_MCP_SERVICE_ACCOUNT_TOKEN}
+      - GRAFANA_ORG_ID=${GRAFANA_MCP_ORG_ID:-1}
+    ports:
+      - "${GRAFANA_MCP_PORT:-8010}:8000"
+    expose:
+      - "9090"
+    networks:
+      - monitoring
+    depends_on:
+      - grafana
+
   blackbox-exporter:
     image: prom/blackbox-exporter:v0.25.0
     container_name: blackbox-exporter
@@ -73,6 +102,23 @@ services:
       - ./blackbox/config.yml:/etc/blackbox_exporter/config.yml:ro
     ports:
       - "9115:9115"
+    networks:
+      - monitoring
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    command:
+      - --housekeeping_interval=30s
+      - --docker_only=true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
     networks:
       - monitoring
 
@@ -121,9 +167,9 @@ services:
       - DISABLE_FOR_SECONDS=30
       - ENABLE_ZERO_LOSS_FOR_SECONDS=60
       - COOLDOWN_SECONDS=300
-      - PREFERRED_WHEN_BOTH_BAD=WAN_VIVO_DHCP
-      - SECONDARY_WAN_NAME=WAN_VERO_DHCP
-      - WAN_INTERFACE_MAP=WAN_VIVO_DHCP:opt1,WAN_VERO_DHCP:wan
+      - PREFERRED_WHEN_BOTH_BAD=WAN_NETMINAS_DHCP
+      - SECONDARY_WAN_NAME=WAN_VALENET_DHCP
+      - WAN_INTERFACE_MAP=WAN_NETMINAS_DHCP:opt1,WAN_VALENET_DHCP:wan
       - PF_HOST=${PFSENSE_HOST}
       - PF_USER=${PFSENSE_SSH_USER}
       - PF_SSH_KEY_PATH=/run/secrets/pfsense_id_rsa
@@ -140,19 +186,21 @@ services:
       - prometheus
       - pfsense-gateway-exporter
 
-  whatsapp-relay:
+  alert-router:
+    profiles:
+      - nextgen
     build:
-      context: ./whatsapp-relay
-    container_name: whatsapp-relay
+      context: ./nextgen/alert_router
+    container_name: alert-router
     restart: unless-stopped
     environment:
-      - EVOLUTION_BASE_URL=${EVOLUTION_BASE_URL}
-      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE}
-      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
-      - WHATSAPP_TO=${WHATSAPP_TO}
       - ALERT_SOURCE=${ALERT_SOURCE}
-    expose:
-      - "8080"
+      - WHATSAPP_TO_GENERAL=${WHATSAPP_TO_GENERAL}
+      - WHATSAPP_TO_CRITICAL=${WHATSAPP_TO_CRITICAL}
+      - NOTIFY_API_URL=${NOTIFY_API_URL}
+      - NOTIFY_API_KEY=${NOTIFY_API_KEY}
+    ports:
+      - "8081:8081"
     networks:
       - monitoring
 
