@@ -194,11 +194,24 @@ class EvolutionMessage(BaseModel):
 
     @property
     def msg_id(self) -> str:
-        return self.key.get("id", "")
+        # Evolution sends message ID in key.id; fallback to key.remoteJid stripped
+        msg_id = self.key.get("id", "")
+        if not msg_id:
+            remote_jid = self.key.get("remoteJid", "")
+            if remote_jid:
+                msg_id = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
+        return msg_id
 
     @property
     def sender(self) -> str:
-        return self.key.get("remote", "")
+        # Evolution sends JID (e.g. "553183456394@s.whatsapp.net" or "54143045632053@lid")
+        # Normalize to bare number for allowlist comparison
+        remote = self.key.get("remote", "")
+        if not remote:
+            remote = self.key.get("remoteJid", "")
+        # Strip any @ suffix (e.g. @s.whatsapp.net, @lid, @g.us)
+        bare = remote.split("@")[0] if remote else ""
+        return bare
 
     @property
     def text(self) -> str:
