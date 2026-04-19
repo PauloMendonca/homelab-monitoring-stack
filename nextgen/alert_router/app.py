@@ -321,12 +321,13 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
         logger.debug("whatsapp-inbound: unrecognised command text %r from %s", text[:40], _mask_number(sender))
         return {"status": "ignored_not_command"}
 
-    handler_fn = _COMMANDS.get("modo", {}).get(subcmd)
-    if handler_fn is None:
+    handler_entry = _COMMANDS.get("modo", {}).get(subcmd)
+    if handler_entry is None:
         # Unknown subcommand — show help
         response_text = _cmd_help()
     else:
-        # Dispatch to handler (all handlers take no args in Phase 1)
+        # Dispatch to handler (entry is a tuple: (command_string, handler_fn))
+        handler_fn = handler_entry[1]
         if subcmd in ("normal", "gaming"):
             response_text = _cmd_not_ready(subcmd)
         else:
