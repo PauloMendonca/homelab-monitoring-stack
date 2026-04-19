@@ -1,16 +1,34 @@
+import json
 import logging
 import os
+import re
+import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 import requests
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel, Field
 
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("alert-router")
 
-app = FastAPI(title="alert-router", version="0.1.0")
+app = FastAPI(title="alert-router", version="0.2.0")
 
+# ── In-memory dedup cache (message_id -> True), wiped on restart ─────────────
+_processed_ids: dict[str, bool] = {}
+_DEDUP_MAX = 10_000
+
+
+def _mask_number(number: str) -> str:
+    """Mask all but last 4 digits of a phone number for safe logging."""
+    if not number or len(number) < 4:
+        return "****"
+    return f"***{number[-4:]}"
+
+
+# ── Existing Alertmanager helpers ───────────────────────────────────────────
 
 def _fmt_alert(alert: dict) -> str:
     labels = alert.get("labels", {})
@@ -77,6 +95,122 @@ def _publish_message(policy: str, text: str, recipients: list[str]) -> None:
         raise HTTPException(status_code=502, detail=f"notify_api_http_{response.status_code}")
 
 
+# ── Evolution API outbound (WhatsApp reply) ─────────────────────────────────
+
+def _send_whatsapp(text: str, recipient: str) -> tuple[bool, str]:
+    """Send a single WhatsApp text message via Evolution API."""
+    base_url = os.getenv("EVOLUTION_BASE_URL", "").rstrip("/")
+    instance = os.getenv("EVOLUTION_INSTANCE", "")
+    api_key = os.getenv("EVOLUTION_API_KEY", "")
+
+    if not all([base_url, instance, api_key]):
+        return False, "evolution_not_configured"
+
+    url = f"{base_url}/message/sendText/{instance}"
+    headers = {"apikey": api_key, "Content-Type": "application/json"}
+    payload = {"number": recipient, "text": text}
+
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=20)
+    except requests.RequestException as exc:
+        return False, f"request_error:{exc}"
+
+    if response.status_code >= 300:
+        return False, f"http_{response.status_code}"
+
+    return True, "ok"
+
+
+# ── WhatsApp command parser (Phase 1 — no execution) ─────────────────────────
+
+_COMMANDS = {
+    "modo": {
+        "help":        ("/modo ajuda",    _cmd_help),
+        "status":     ("/modo status",   _cmd_status),
+        "normal":     ("/modo normal",   _cmd_not_ready),
+        "gaming":     ("/modo gaming",   _cmd_not_ready),
+    },
+}
+
+
+def _cmd_help() -> str:
+    return (
+        "🤖 *Modo — Comando WhatsApp*\n\n"
+        "Comandos disponiveis:\n"
+        "  /modo ajuda     — Esta lista\n"
+        "  /modo status    — Estado atual do sistema de modos\n"
+        "  /modo normal    — Ativar modo normal *(em breve)*\n"
+        "  /modo gaming    — Ativar modo gaming *(em breve)*\n\n"
+        "⚠️ Fase 1: canal ativo, execucao das trocas prevista para Fase 2."
+    )
+
+
+def _cmd_status() -> str:
+    return (
+        "📊 *Modo — Status*\n\n"
+        "🟢 Canal WhatsApp: ATIVO\n"
+        "🟡 Execucao de modos: AGUARDANDO FASE 2\n\n"
+        "Estado atual: *nao implementado ainda*\n"
+        "Cenario ativo: *nao implementado ainda*\n\n"
+        "Para ajuda: /modo ajuda"
+    )
+
+
+def _cmd_not_ready(subcmd: str) -> str:
+    return (
+        f"⚠️ Comando `/modo {subcmd}` ainda não está ativo.\n"
+        "A execução de troca de modo será habilitada na *Fase 2*.\n\n"
+        "Por enquanto, o canal está funcionando para consulta.\n"
+        "Para status: /modo status\n"
+        "Para ajuda: /modo ajuda"
+    )
+
+
+def _parse_command(text: str) -> tuple[str | None, str | None]:
+    """Parse a WhatsApp command text. Returns (subcmd, action) or (None, None)."""
+    text = text.strip()
+    m = re.match(r"^/modo\s+(\w+)", text)
+    if not m:
+        return None, None
+    return m.group(1), "execute"
+
+
+def _is_sender_authorized(sender: str, allowed: list[str]) -> bool:
+    """Check if sender is in the allowlist. Empty allowlist blocks all."""
+    if not allowed:
+        logger.warning("Allowlist is empty — blocking all senders")
+        return False
+    return sender in allowed
+
+
+# ── Pydantic models for webhook payloads ────────────────────────────────────
+
+class EvolutionMessage(BaseModel):
+    """Minimal model for Evolution API inbound webhook messages."""
+    key: dict[str, Any] = Field(default_factory=dict)
+    message: dict[str, Any] = Field(default_factory=dict)
+    pushName: str = ""
+
+    @property
+    def msg_id(self) -> str:
+        return self.key.get("id", "")
+
+    @property
+    def sender(self) -> str:
+        return self.key.get("remote", "")
+
+    @property
+    def text(self) -> str:
+        msg_data = self.message.get("conversation") or self.message.get("extendedTextMessage", {})
+        return msg_data if isinstance(msg_data, str) else msg_data.get("text", "")
+
+    @property
+    def from_me(self) -> bool:
+        return bool(self.key.get("fromMe", False))
+
+
+# ── Endpoints ───────────────────────────────────────────────────────────────
+
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -84,6 +218,7 @@ def healthz() -> dict[str, str]:
 
 @app.post("/alertmanager")
 async def alertmanager_webhook(request: Request) -> dict[str, int]:
+    """Existing Alertmanager webhook — must not regress."""
     payload = await request.json()
     alerts = payload.get("alerts", [])
     grouped = _group_by_severity(alerts)
@@ -104,3 +239,112 @@ async def alertmanager_webhook(request: Request) -> dict[str, int]:
 
     logger.info("Processed %d alerts in %d publications", len(alerts), total_published)
     return {"alerts": len(alerts), "publications": total_published}
+
+
+@app.post("/whatsapp-inbound")
+async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | None = Header(default=None)) -> dict[str, Any]:
+    """
+    Inbound webhook for WhatsApp commands via Evolution API.
+
+    Security:
+    - Webhook secret header validation
+    - Sender allowlist (ALLOWED_WHATSAPP_SENDERS, comma-separated phone numbers)
+    - Dedup by message_id (in-memory, non-persistent)
+    - Ignores messages sent by the own instance (fromMe=true)
+    """
+    # ── 1. Authenticate webhook ────────────────────────────────────────────
+    expected_secret = os.getenv("EVOLUTION_WEBHOOK_SECRET", "")
+    if expected_secret and x_evolution_webhook_secret != expected_secret:
+        logger.warning("whatsapp-inbound: invalid webhook secret from %s", request.client.host)
+        raise HTTPException(status_code=403, detail="invalid_webhook_secret")
+
+    # ── 2. Parse payload ─────────────────────────────────────────────────
+    payload = await request.json()
+    try:
+        msg = EvolutionMessage(**payload)
+    except Exception as exc:
+        logger.warning("whatsapp-inbound: failed to parse payload: %s", exc)
+        raise HTTPException(status_code=400, detail="invalid_payload")
+
+    # ── 3. Dedup ──────────────────────────────────────────────────────────
+    msg_id = msg.msg_id
+    if not msg_id:
+        logger.debug("whatsapp-inbound: message without msg_id, allowing")
+    elif msg_id in _processed_ids:
+        logger.info("whatsapp-inbound: duplicate message %s (masked sender %s)", msg_id, _mask_number(msg.sender))
+        return {"status": "duplicate", "message_id": msg_id}
+    else:
+        _processed_ids[msg_id] = True
+        if len(_processed_ids) > _DEDUP_MAX:
+            # Prune oldest entries (dict preserves insertion order in Python 3.7+)
+            keys_to_remove = list(_processed_ids)[: len(_processed_ids) // 2]
+            for k in keys_to_remove:
+                del _processed_ids[k]
+
+    # ── 4. Ignore outgoing / self messages ───────────────────────────────
+    if msg.from_me:
+        logger.debug("whatsapp-inbound: ignoring outgoing message")
+        return {"status": "ignored_outgoing"}
+
+    sender = msg.sender
+    text = msg.text
+
+    logger.info(
+        "whatsapp-inbound: msg_id=%s from=%s pushName=%s text=%r",
+        msg_id,
+        _mask_number(sender),
+        msg.pushName or "(unknown)",
+        text[:80],
+    )
+
+    # ── 5. Authorize sender ────────────────────────────────────────────────
+    allowlist_raw = os.getenv("ALLOWED_WHATSAPP_SENDERS", "").strip()
+    allowed_senders = [s.strip() for s in allowlist_raw.split(",") if s.strip()]
+
+    if not _is_sender_authorized(sender, allowed_senders):
+        logger.warning(
+            "whatsapp-inbound: unauthorized sender %s (masked %s)",
+            sender,
+            _mask_number(sender),
+        )
+        # Silently ignore — don't reveal allowlist existence to unauthorized callers
+        return {"status": "ignored_unauthorized"}
+
+    # ── 6. Parse and dispatch command ─────────────────────────────────────
+    if not text:
+        return {"status": "ignored_empty"}
+
+    subcmd, action = _parse_command(text)
+
+    if subcmd is None:
+        logger.debug("whatsapp-inbound: unrecognised command text %r from %s", text[:40], _mask_number(sender))
+        return {"status": "ignored_not_command"}
+
+    handler_fn = _COMMANDS.get("modo", {}).get(subcmd)
+    if handler_fn is None:
+        # Unknown subcommand — show help
+        response_text = _cmd_help()
+    else:
+        # Dispatch to handler (all handlers take no args in Phase 1)
+        if subcmd in ("normal", "gaming"):
+            response_text = _cmd_not_ready(subcmd)
+        else:
+            response_text = handler_fn()
+
+    # ── 7. Send reply via Evolution API ────────────────────────────────────
+    ok, reason = _send_whatsapp(response_text, sender)
+    if ok:
+        logger.info(
+            "whatsapp-inbound: command '/modo %s' -> reply sent to %s",
+            subcmd,
+            _mask_number(sender),
+        )
+        return {"status": "reply_sent", "command": subcmd, "to": _mask_number(sender)}
+    else:
+        logger.error(
+            "whatsapp-inbound: failed to send reply for '/modo %s' to %s: %s",
+            subcmd,
+            _mask_number(sender),
+            reason,
+        )
+        return {"status": "reply_failed", "command": subcmd, "reason": reason}
