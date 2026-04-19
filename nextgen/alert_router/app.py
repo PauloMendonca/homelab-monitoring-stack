@@ -123,16 +123,6 @@ def _send_whatsapp(text: str, recipient: str) -> tuple[bool, str]:
 
 # ── WhatsApp command parser (Phase 1 — no execution) ─────────────────────────
 
-_COMMANDS = {
-    "modo": {
-        "help":        ("/modo ajuda",    _cmd_help),
-        "status":     ("/modo status",   _cmd_status),
-        "normal":     ("/modo normal",   _cmd_not_ready),
-        "gaming":     ("/modo gaming",   _cmd_not_ready),
-    },
-}
-
-
 def _cmd_help() -> str:
     return (
         "🤖 *Modo — Comando WhatsApp*\n\n"
@@ -164,6 +154,17 @@ def _cmd_not_ready(subcmd: str) -> str:
         "Para status: /modo status\n"
         "Para ajuda: /modo ajuda"
     )
+
+
+# _COMMANDS must be defined AFTER all handler functions so Python can resolve them
+_COMMANDS = {
+    "modo": {
+        "help":    ("/modo ajuda",    _cmd_help),
+        "status":  ("/modo status",   _cmd_status),
+        "normal":  ("/modo normal",   _cmd_not_ready),
+        "gaming":  ("/modo gaming",   _cmd_not_ready),
+    },
+}
 
 
 def _parse_command(text: str) -> tuple[str | None, str | None]:
