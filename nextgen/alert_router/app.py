@@ -186,8 +186,16 @@ def _is_sender_authorized(sender: str, allowed: list[str]) -> bool:
 
 # ── Pydantic models for webhook payloads ────────────────────────────────────
 
+# Event types that represent inbound messages (vs. connection/qrcode/receipt events)
+_MESSAGE_EVENT_TYPES = frozenset([
+    "messages.upsert",
+    "MESSAGES_UPSERT",
+    "message_received",
+])
+
+
 class EvolutionMessage(BaseModel):
-    """Minimal model for Evolution API inbound webhook messages."""
+    """Minimal model for Evolution API inbound webhook messages (flat format)."""
     key: dict[str, Any] = Field(default_factory=dict)
     message: dict[str, Any] = Field(default_factory=dict)
     pushName: str = ""
@@ -221,6 +229,62 @@ class EvolutionMessage(BaseModel):
     @property
     def from_me(self) -> bool:
         return bool(self.key.get("fromMe", False))
+
+
+def _parse_message_payload(payload: dict) -> tuple[str, str, str, bool, str, str] | None:
+    """
+    Extract message data from either flat or enveloped Evolution webhook payload.
+
+    Returns: (msg_id, sender, text, from_me, pushName, event_name) or None if not a message event.
+    """
+    event = payload.get("event", "")
+
+    # Detect enveloped format: message data inside 'data' field
+    data = payload.get("data", {})
+    if data:
+        # Enveloped format — extract from 'data'
+        key_data = data.get("key", {})
+        msg_id = data.get("id", "") or key_data.get("id", "")
+        if not msg_id:
+            remote_jid = key_data.get("remoteJid", "")
+            if remote_jid:
+                msg_id = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
+
+        remote = key_data.get("remote", "") or key_data.get("remoteJid", "")
+        sender = remote.split("@")[0] if remote else ""
+
+        msg_content = data.get("message", {})
+        text = msg_content.get("conversation") or msg_content.get("extendedTextMessage", {})
+        if isinstance(text, dict):
+            text = text.get("text", "") or ""
+        text = text or ""
+
+        from_me = bool(key_data.get("fromMe", False))
+        push_name = data.get("pushName", "") or ""
+        event_name = event
+    else:
+        # Flat format — payload IS the message
+        key_data = payload.get("key", {})
+        msg_id = key_data.get("id", "")
+        if not msg_id:
+            remote_jid = key_data.get("remoteJid", "")
+            if remote_jid:
+                msg_id = remote_jid.split("@")[0] if "@" in remote_jid else remote_jid
+
+        remote = key_data.get("remote", "") or key_data.get("remoteJid", "")
+        sender = remote.split("@")[0] if remote else ""
+
+        msg_content = payload.get("message", {})
+        text = msg_content.get("conversation") or msg_content.get("extendedTextMessage", {})
+        if isinstance(text, dict):
+            text = text.get("text", "") or ""
+        text = text or ""
+
+        from_me = bool(key_data.get("fromMe", False))
+        push_name = payload.get("pushName", "") or ""
+        event_name = ""
+
+    return (msg_id, sender, text, from_me, push_name, event_name)
 
 
 # ── Endpoints ───────────────────────────────────────────────────────────────
@@ -260,11 +324,16 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
     """
     Inbound webhook for WhatsApp commands via Evolution API.
 
+    Supports two payload formats:
+    - Flat (direct message): {key: {id, remoteJid, fromMe}, message: {conversation}, pushName}
+    - Enveloped (from webhook dispatcher): {event, data: {key, message, pushName, ...}}
+
     Security:
     - Webhook secret header validation
     - Sender allowlist (ALLOWED_WHATSAPP_SENDERS, comma-separated phone numbers)
     - Dedup by message_id (in-memory, non-persistent)
     - Ignores messages sent by the own instance (fromMe=true)
+    - Ignores non-message events (connection, qrcode, receipts)
     """
     # ── 1. Authenticate webhook ────────────────────────────────────────────
     expected_secret = os.getenv("EVOLUTION_WEBHOOK_SECRET", "")
@@ -272,44 +341,47 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
         logger.warning("whatsapp-inbound: invalid webhook secret from %s", request.client.host)
         raise HTTPException(status_code=403, detail="invalid_webhook_secret")
 
-    # ── 2. Parse payload ─────────────────────────────────────────────────
+    # ── 2. Parse payload (try enveloped first, then flat) ─────────────────
     payload = await request.json()
-    try:
-        msg = EvolutionMessage(**payload)
-    except Exception as exc:
-        logger.warning("whatsapp-inbound: failed to parse payload: %s", exc)
+
+    # Try enveloped format first (event + data)
+    event_name = payload.get("event", "")
+    if event_name and event_name not in _MESSAGE_EVENT_TYPES:
+        logger.debug("whatsapp-inbound: ignored event type '%s'", event_name)
+        return {"status": "ignored_event", "event": event_name}
+
+    # Extract message data from either format
+    parsed = _parse_message_payload(payload)
+    if parsed is None:
+        logger.warning("whatsapp-inbound: failed to parse payload structure")
         raise HTTPException(status_code=400, detail="invalid_payload")
 
-    # ── 3. Dedup ──────────────────────────────────────────────────────────
-    msg_id = msg.msg_id
-    if not msg_id:
-        logger.debug("whatsapp-inbound: message without msg_id, allowing")
-    elif msg_id in _processed_ids:
-        logger.info("whatsapp-inbound: duplicate message %s (masked sender %s)", msg_id, _mask_number(msg.sender))
-        return {"status": "duplicate", "message_id": msg_id}
-    else:
-        _processed_ids[msg_id] = True
-        if len(_processed_ids) > _DEDUP_MAX:
-            # Prune oldest entries (dict preserves insertion order in Python 3.7+)
-            keys_to_remove = list(_processed_ids)[: len(_processed_ids) // 2]
-            for k in keys_to_remove:
-                del _processed_ids[k]
+    msg_id, sender, text, from_me, push_name, event_name = parsed
 
-    # ── 4. Ignore outgoing / self messages ───────────────────────────────
-    if msg.from_me:
+    logger.info(
+        "whatsapp-inbound: msg_id=%s from=%s pushName=%s event=%s text=%r",
+        msg_id,
+        _mask_number(sender),
+        push_name or "(unknown)",
+        event_name or "flat",
+        text[:80] if text else "",
+    )
+
+    # ── 3. Ignore outgoing / self messages ───────────────────────────────
+    if from_me:
         logger.debug("whatsapp-inbound: ignoring outgoing message")
         return {"status": "ignored_outgoing"}
 
-    sender = msg.sender
-    text = msg.text
-
-    logger.info(
-        "whatsapp-inbound: msg_id=%s from=%s pushName=%s text=%r",
-        msg_id,
-        _mask_number(sender),
-        msg.pushName or "(unknown)",
-        text[:80],
-    )
+    # ── 4. Dedup ──────────────────────────────────────────────────────────
+    if msg_id and msg_id in _processed_ids:
+        logger.info("whatsapp-inbound: duplicate message %s (masked sender %s)", msg_id, _mask_number(sender))
+        return {"status": "duplicate", "message_id": msg_id}
+    if msg_id:
+        _processed_ids[msg_id] = True
+        if len(_processed_ids) > _DEDUP_MAX:
+            keys_to_remove = list(_processed_ids)[: len(_processed_ids) // 2]
+            for k in keys_to_remove:
+                del _processed_ids[k]
 
     # ── 5. Authorize sender ────────────────────────────────────────────────
     allowlist_raw = os.getenv("ALLOWED_WHATSAPP_SENDERS", "").strip()
@@ -321,7 +393,6 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
             sender,
             _mask_number(sender),
         )
-        # Silently ignore — don't reveal allowlist existence to unauthorized callers
         return {"status": "ignored_unauthorized"}
 
     # ── 6. Parse and dispatch command ─────────────────────────────────────
@@ -336,10 +407,8 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
 
     handler_entry = _COMMANDS.get("modo", {}).get(subcmd)
     if handler_entry is None:
-        # Unknown subcommand — show help
         response_text = _cmd_help()
     else:
-        # Dispatch to handler (entry is a tuple: (command_string, handler_fn))
         handler_fn = handler_entry[1]
         if subcmd in ("normal", "gaming"):
             response_text = _cmd_not_ready(subcmd)
