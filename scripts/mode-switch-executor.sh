@@ -19,8 +19,6 @@ set -euo pipefail
 # Phase 3 gaming control - must be explicit "true" to enable
 _PHASE3_GAMING_ENABLED="${PHASE3_GAMING_ENABLED:-false}"
 
-# When invoked via forced command with SSH_ORIGINAL_COMMAND:
-# Extract the subcommand (second word) from command string.
 determine_subcmd() {
     local orig="${SSH_ORIGINAL_COMMAND:-}"
     if [[ "$orig" =~ ^mode-switch[[:space:]]+(status|normal|gaming)$ ]]; then
@@ -38,6 +36,10 @@ audit() {
     logger -t mode-switch -p user.info "audit: user=$USER command='$*' result=$1" 2>/dev/null || true
 }
 
+strip_ansi() {
+    sed 's/\x1b\[[0-9;]*m//g'
+}
+
 MODE_ARG="$(determine_subcmd)"
 
 if [[ -z "$MODE_ARG" ]]; then
@@ -53,7 +55,6 @@ if [[ "$MODE_ARG" == "gaming" ]]; then
         audit "gaming_blocked_by_flag"
         exit 1
     fi
-    # Flag is true - proceed with gaming transition
     audit "gaming_accepted_by_flag"
 fi
 
@@ -62,7 +63,7 @@ audit "command_accepted"
 case "$MODE_ARG" in
     status)
         audit "status_requested"
-        log "Status query received - delegating to real mode-switch"
+        log "Status query received"
 
         REAL_OUTPUT=$(/usr/local/bin/mode-switch status 2>&1)
         REAL_EXIT=$?
@@ -72,8 +73,6 @@ case "$MODE_ARG" in
             audit "status_failed"
             exit 1
         fi
-
-        strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 
         DESIRED_MODE=$(echo "$REAL_OUTPUT" | grep "Current desired mode:" | sed 's/.*: *//' | strip_ansi)
         SYSTEM_STATE=$(echo "$REAL_OUTPUT" | grep "Actual system state:" | sed 's/  Actual system state: *//' | strip_ansi)
@@ -144,51 +143,6 @@ case "$MODE_ARG" in
             echo "transition=gaming"
             echo "status=switched"
             audit "gaming_switched"
-        fi
-        ;;
-
-    *)
-        echo "ERROR: Internal error - unexpected command '$MODE_ARG'"
-        audit "internal_error"
-        exit 1
-        ;;
-esac
-
-        # Output structured format for executor.py to parse
-        echo "OK"
-        echo "service=$SERVICE_STATUS"
-        echo "mode=$DESIRED_MODE"
-        echo "alignment=$ALIGNMENT"
-        echo "raw_output_lines=3"
-        audit "status_response_ok"
-        ;;
-
-    normal)
-        audit "normal_requested"
-        log "Normal mode transition requested"
-
-        # Call the real mode-switch command
-        REAL_OUTPUT=$(/usr/local/bin/mode-switch switch normal 2>&1)
-        REAL_EXIT=$?
-
-        if [[ $REAL_EXIT -ne 0 ]]; then
-            echo "ERROR: mode-switch switch normal failed with exit code $REAL_EXIT"
-            echo "Output: $REAL_OUTPUT"
-            audit "normal_failed"
-            exit 1
-        fi
-
-        # Check if actually switched or already in normal
-        if echo "$REAL_OUTPUT" | grep -qi "already"; then
-            echo "OK"
-            echo "transition=normal"
-            echo "status=already_set"
-            audit "normal_already_set"
-        else
-            echo "OK"
-            echo "transition=normal"
-            echo "status=switched"
-            audit "normal_switched"
         fi
         ;;
 
