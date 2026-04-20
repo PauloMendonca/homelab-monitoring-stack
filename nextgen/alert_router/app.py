@@ -176,12 +176,44 @@ def _parse_command(text: str) -> tuple[str | None, str | None]:
     return m.group(1), "execute"
 
 
+def _normalize_br_mobile_number(number: str) -> str:
+    """
+    Normalize Brazilian mobile numbers that may be missing the 9th digit.
+
+    WhatsApp sometimes sends numbers from the same device in two forms:
+    - With 9th digit:  5531971110477  (13 digits, format: 55 + DDD + 9 + number)
+    - Without 9th digit: 553171110477  (12 digits, format: 55 + DDD + number)
+
+    When the bare number is 12 digits and starts with 55 (Brazil), insert '9'
+    after the 4-digit country+DDD prefix to reconstruct the standard mobile format.
+
+    Examples:
+        553171110477 -> 5531971110477
+        5531983456394 -> 5531983456394  (unchanged, already 13 digits)
+        5511900000000 -> 5511900000000  (unchanged, no 9 to insert)
+    """
+    digits = number.strip()
+    # Brazilian format: 55 + DDD (2 digits) + number (8 or 9 digits)
+    # Valid normalized: 13 digits starting with 55
+    if len(digits) == 12 and digits.startswith("55"):
+        # Insert '9' after country code (55) + DDD (2 digits) = prefix of 4 digits
+        return digits[:4] + "9" + digits[4:]
+    return digits
+
+
 def _is_sender_authorized(sender: str, allowed: list[str]) -> bool:
     """Check if sender is in the allowlist. Empty allowlist blocks all."""
     if not allowed:
         logger.warning("Allowlist is empty — blocking all senders")
         return False
-    return sender in allowed
+    normalized = _normalize_br_mobile_number(sender)
+    if normalized != sender:
+        logger.debug(
+            "whatsapp-inbound: sender %s normalized to %s for allowlist check",
+            sender,
+            normalized,
+        )
+    return normalized in allowed
 
 
 # ── Pydantic models for webhook payloads ────────────────────────────────────
