@@ -82,13 +82,13 @@ curl -s http://127.0.0.1:8010/healthz
 - Manifests K8s/ArgoCD em `k8s/notifications/` e `argocd/notifications-*.yaml`.
 - Segredos e mapeamento 1Password em `docs/notifications-1password-secrets.md`.
 
-## Modo-Switch remoto via WhatsApp (Fase 2)
+## Mode-Switch remoto via WhatsApp (Fase 2)
 
 ### Arquitetura
 - **alert-router** (TrueNAS) recebe comando WhatsApp via Evolution API
-- Executa SSH restrito para **10.10.11.5** (MicroK8s)
-- SSH usa chave dedicada (`mode_switch_id_ed25519`) com forced command
-- Forced command (`mode-switch-executor.sh`) aceita apenas `status` e `normal`
+- Executa SSH para **10.10.11.5** (MicroK8s) com chave dedicada
+- SSH usa host key pinning (arquivo known_hosts, NAO bypass de verificacao)
+- Forced command no authorized_keys: `command="/opt/mode-switch/mode-switch-executor.sh ..."`
 - Nenhuma credencial de usuario, shell, ou execucao arbitraria
 
 ### Comandos WhatsApp
@@ -101,24 +101,37 @@ curl -s http://127.0.0.1:8010/healthz
 
 ### Seguranca
 - Chave SSH em `secrets/mode_switch_id_ed25519` (gitignored)
-- 1Password: `MODE_SWITCH_SSH_KEY` no vault `MCP API Keys`
-- forced command no authorized_keys: `command="/opt/mode-switch/mode-switch-executor.sh ..."`
+- known_hosts em `secrets/mode_switch_known_hosts` (gitignored)
+- Host key pinning: `StrictHostKeyChecking=yes` + `UserKnownHostsFile=...`
+- forced command: `command="/opt/mode-switch/mode-switch-executor.sh ..."`
 - Sem shell, sem pipe, sem redirecionamento via SSH
+- BatchMode=yes (sem prompts de senha)
 
 ### Setup (uma vez)
 1. Gerar chave SSH no TrueNAS:
    ```bash
+   cd ~/monitoring-stack
    ssh-keygen -t ed25519 -f secrets/mode_switch_id_ed25519 -N "" -C "alert-router mode-switch"
    ```
-2. Criar item em 1Password com a chave privada
-3. Instalar chave publica em 10.10.11.5:
+2. Gerar known_hosts com host keys do 10.10.11.5:
    ```bash
-   # No host 10.10.11.5:
-   mkdir -p ~/.ssh
-   echo "command=\"/opt/mode-switch/mode-switch-executor.sh $SSH_ORIGINAL_COMMAND\",no-agent-forwarding,no-pty,no-user-rc,restrict $(cat secrets/mode_switch_id_ed25519.pub)" >> ~/.ssh/authorized_keys
+   ssh-keyscan -t ed25519,rsa 10.10.11.5 > secrets/mode_switch_known_hosts
+   chmod 644 secrets/mode_switch_known_hosts
+   chmod 600 secrets/mode_switch_id_ed25519
    ```
-4. Copiar script para 10.10.11.5:
+3. Copiar chave publica para 10.10.11.5:
    ```bash
-   ssh 10.10.11.5 "sudo mkdir -p /opt/mode-switch && sudo cp mode-switch-executor.sh /opt/mode-switch/ && sudo chmod 755 /opt/mode-switch/mode-switch-executor.sh"
+   # Copiar pubkey content:
+   cat secrets/mode_switch_id_ed25519.pub
+   # No host 10.10.11.5 — adicionar em ~/.ssh/authorized_keys:
+   echo 'command="/opt/mode-switch/mode-switch-executor.sh $SSH_ORIGINAL_COMMAND",no-agent-forwarding,no-pty,no-user-rc,restrict,ssh-ed25519 AAAAC3...YOUR_KEY_HERE' >> ~/.ssh/authorized_keys
    ```
-5. Registrar 1Password secret reference em `.env.op`
+4. Copiar executor script para 10.10.11.5:
+   ```bash
+   scp scripts/mode-switch-executor.sh paulo@10.10.11.5:/tmp/
+   ssh paulo@10.10.11.5 "sudo mkdir -p /opt/mode-switch && sudo mv /tmp/mode-switch-executor.sh /opt/mode-switch/ && sudo chmod 755 /opt/mode-switch/mode-switch-executor.sh"
+   ```
+5. Rebuild do alert-router com 1Password:
+   ```bash
+   sudo ./scripts/run-with-1password.sh --profile nextgen up -d --build alert-router
+   ```

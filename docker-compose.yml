@@ -206,13 +206,14 @@ services:
       - ALLOWED_WHATSAPP_SENDERS=${ALLOWED_WHATSAPP_SENDERS}
       # Phase 2: mode-switch remote executor
       - MODE_SWITCH_HOST=${MODE_SWITCH_HOST:-10.10.11.5}
-      - MODE_SWITCH_SSH_USER=${MODE_SWITCH_SSH_USER:-ubuntu}
-      - MODE_SWITCH_SSH_KEY_PATH=${MODE_SWITCH_SSH_KEY_PATH}
-      - MODE_SWITCH_SSH_KEY=${MODE_SWITCH_SSH_KEY}
+      - MODE_SWITCH_SSH_USER=${MODE_SWITCH_SSH_USER:-paulo}
+      - MODE_SWITCH_SSH_KEY_PATH=/run/secrets/mode_switch_id_ed25519
+      - MODE_SWITCH_SSH_KNOWN_HOSTS_PATH=/run/secrets/mode_switch_known_hosts
       - MODE_SWITCH_TIMEOUT_SECONDS=${MODE_SWITCH_TIMEOUT_SECONDS:-10}
     volumes:
-      # SSH key for mode-switch executor (Phase 2)
+      # Phase 2: SSH key + known_hosts for host key pinning (no bypass)
       - ./secrets/mode_switch_id_ed25519:/run/secrets/mode_switch_id_ed25519:ro
+      - ./secrets/mode_switch_known_hosts:/run/secrets/mode_switch_known_hosts:ro
     ports:
       - "8081:8081"
     networks:
