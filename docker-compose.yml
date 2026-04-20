@@ -210,6 +210,10 @@ services:
       - MODE_SWITCH_SSH_KEY_PATH=/run/secrets/mode_switch_id_ed25519
       - MODE_SWITCH_SSH_KNOWN_HOSTS_PATH=/run/secrets/mode_switch_known_hosts
       - MODE_SWITCH_TIMEOUT_SECONDS=${MODE_SWITCH_TIMEOUT_SECONDS:-10}
+      # Phase 3: gaming feature flag (default OFF — requires explicit enable)
+      - PHASE3_GAMING_ENABLED=${PHASE3_GAMING_ENABLED:-false}
+      - PHASE3_CONFIRM_TTL_SECONDS=${PHASE3_CONFIRM_TTL_SECONDS:-120}
+      - PHASE3_GAMING_COOLDOWN_SECONDS=${PHASE3_GAMING_COOLDOWN_SECONDS:-300}
     volumes:
       # Phase 2: SSH key + known_hosts for host key pinning (no bypass)
       - ./secrets/mode_switch_id_ed25519:/run/secrets/mode_switch_id_ed25519:ro

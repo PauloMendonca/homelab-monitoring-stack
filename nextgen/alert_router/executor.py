@@ -186,3 +186,48 @@ def set_mode_normal() -> ModeTransitionResult:
         message=f"Resposta inesperada do target: {stdout}",
         raw_output=stdout,
     )
+
+
+# ── Gaming transition (Phase 3 — prepared but not enabled by default) ───────
+
+def set_mode_gaming() -> ModeTransitionResult:
+    """
+    Request transition to gaming mode on 10.10.11.5.
+
+    This function is prepared for Phase 3 but gated by the PHASE3_GAMING_ENABLED
+    feature flag in app.py. With the flag OFF (default), this function should
+    never be called — the wrapper on the target also blocks gaming commands.
+
+    When enabled, this performs the actual mode transition via forced command.
+    """
+    returncode, stdout, stderr = _exec_remote("mode-switch gaming")
+
+    if returncode != 0:
+        logger.error("mode-switch gaming failed (code=%d): %s", returncode, stderr or "non-zero exit")
+        return ModeTransitionResult(
+            success=False,
+            message=f"Transicao para gaming recusada: {stderr or f'exit code {returncode}'}",
+            raw_output=stderr,
+        )
+
+    lines = stdout.strip().splitlines()
+    transition = None
+    status = None
+    for line in lines:
+        if line.startswith("transition="):
+            transition = line.split("=", 1)[1].strip()
+        elif line.startswith("status="):
+            status = line.split("=", 1)[1].strip()
+
+    if transition == "gaming" and status in ("executed", "switched"):
+        return ModeTransitionResult(
+            success=True,
+            message="Modo gaming ativado",
+            raw_output=stdout,
+        )
+
+    return ModeTransitionResult(
+        success=False,
+        message=f"Resposta inesperada do target: {stdout}",
+        raw_output=stdout,
+    )

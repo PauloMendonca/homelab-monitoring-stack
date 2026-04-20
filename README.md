@@ -135,3 +135,39 @@ curl -s http://127.0.0.1:8010/healthz
    ```bash
    sudo ./scripts/run-with-1password.sh --profile nextgen up -d --build alert-router
    ```
+
+## Fase 3: Gaming Mode com Confirmacao
+
+### Estado atual: PREPARADO POREM DESABILITADO (flag OFF por padrao)
+
+A Fase 3 esta implementada e testavel, porem o flag `PHASE3_GAMING_ENABLED=false` por padrao.
+Isso significa que `/modo gaming` continua retornando mensagem informativa, sem execucao real.
+
+### Comandos adicionais (Fase 3)
+| Comando | Descricao |
+|---------|-----------|
+| `/modo gaming` | Solicita codigo de confirmacao (quando flag ON) |
+| `/modo confirmar <codigo>` | Valida codigo e executa gaming |
+| `/modo cancelar` | Cancela confirmacao pendente |
+
+### Feature Flag
+```bash
+# Para habilitar gaming (quando pronto):
+PHASE3_GAMING_ENABLED=true
+
+# Configuracoes tuneaveis:
+PHASE3_CONFIRM_TTL_SECONDS=120        # TTL do codigo de confirmacao
+PHASE3_GAMING_COOLDOWN_SECONDS=300    # Cooldown apos execucao de gaming
+```
+
+### Fluxo de seguranca
+1. Usuario envia `/modo gaming`
+2. Sistema gera codigo de 6 digitos (valido por 120s)
+3. Usuario envia `/modo confirmar <codigo>`
+4. Sistema valida codigo e executa `mode-switch switch gaming` via SSH
+5. Cooldown de 300s impede flip-flop
+
+### Bloqueios (mesmo com flag ON)
+- Cooldown ativo: comando rejeitado com tempo restante
+- Codigo invalido/expirado: rejeitado, deve gerar novo
+- gaming bloqueado no wrapper se flag OFF (camada dupla)
