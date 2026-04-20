@@ -35,7 +35,7 @@ _PHASE3_GAMING_ENABLED = os.getenv("PHASE3_GAMING_ENABLED", "false").lower() in 
 _PHASE3_CONFIRM_TTL_SECONDS = int(os.getenv("PHASE3_CONFIRM_TTL_SECONDS", "120"))
 _PHASE3_GAMING_COOLDOWN_SECONDS = int(os.getenv("PHASE3_GAMING_COOLDOWN_SECONDS", "300"))
 _PHASE3_LAST_GAMING_EXEC: Optional[float] = None
-_PHASE3_LOCK = threading.Lock()
+_PHASE3_LOCK = threading.RLock()  # RLock allows reentrant acquire (same thread can hold nested)
 
 # Pending gaming confirmation: sender -> {"code": str, "expires_at": float, "sender": str}
 _PENDING_GAMING: dict[str, dict] = {}
