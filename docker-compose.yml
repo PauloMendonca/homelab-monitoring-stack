@@ -204,6 +204,15 @@ services:
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
       - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET}
       - ALLOWED_WHATSAPP_SENDERS=${ALLOWED_WHATSAPP_SENDERS}
+      # Phase 2: mode-switch remote executor
+      - MODE_SWITCH_HOST=${MODE_SWITCH_HOST:-10.10.11.5}
+      - MODE_SWITCH_SSH_USER=${MODE_SWITCH_SSH_USER:-ubuntu}
+      - MODE_SWITCH_SSH_KEY_PATH=${MODE_SWITCH_SSH_KEY_PATH}
+      - MODE_SWITCH_SSH_KEY=${MODE_SWITCH_SSH_KEY}
+      - MODE_SWITCH_TIMEOUT_SECONDS=${MODE_SWITCH_TIMEOUT_SECONDS:-10}
+    volumes:
+      # SSH key for mode-switch executor (Phase 2)
+      - ./secrets/mode_switch_id_ed25519:/run/secrets/mode_switch_id_ed25519:ro
     ports:
       - "8081:8081"
     networks:

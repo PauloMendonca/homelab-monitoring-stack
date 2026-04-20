@@ -81,3 +81,44 @@ curl -s http://127.0.0.1:8010/healthz
 - Implementacao base em `nextgen/`.
 - Manifests K8s/ArgoCD em `k8s/notifications/` e `argocd/notifications-*.yaml`.
 - Segredos e mapeamento 1Password em `docs/notifications-1password-secrets.md`.
+
+## Modo-Switch remoto via WhatsApp (Fase 2)
+
+### Arquitetura
+- **alert-router** (TrueNAS) recebe comando WhatsApp via Evolution API
+- Executa SSH restrito para **10.10.11.5** (MicroK8s)
+- SSH usa chave dedicada (`mode_switch_id_ed25519`) com forced command
+- Forced command (`mode-switch-executor.sh`) aceita apenas `status` e `normal`
+- Nenhuma credencial de usuario, shell, ou execucao arbitraria
+
+### Comandos WhatsApp
+| Comando | Descricao |
+|---------|-----------|
+| `/modo ajuda` | Lista de comandos |
+| `/modo status` | Consulta estado real do mode-switch em 10.10.11.5 |
+| `/modo normal` | Executa transicao para modo normal (idempotente) |
+| `/modo gaming` | Bloqueado/informativo — fase 3 |
+
+### Seguranca
+- Chave SSH em `secrets/mode_switch_id_ed25519` (gitignored)
+- 1Password: `MODE_SWITCH_SSH_KEY` no vault `MCP API Keys`
+- forced command no authorized_keys: `command="/opt/mode-switch/mode-switch-executor.sh ..."`
+- Sem shell, sem pipe, sem redirecionamento via SSH
+
+### Setup (uma vez)
+1. Gerar chave SSH no TrueNAS:
+   ```bash
+   ssh-keygen -t ed25519 -f secrets/mode_switch_id_ed25519 -N "" -C "alert-router mode-switch"
+   ```
+2. Criar item em 1Password com a chave privada
+3. Instalar chave publica em 10.10.11.5:
+   ```bash
+   # No host 10.10.11.5:
+   mkdir -p ~/.ssh
+   echo "command=\"/opt/mode-switch/mode-switch-executor.sh $SSH_ORIGINAL_COMMAND\",no-agent-forwarding,no-pty,no-user-rc,restrict $(cat secrets/mode_switch_id_ed25519.pub)" >> ~/.ssh/authorized_keys
+   ```
+4. Copiar script para 10.10.11.5:
+   ```bash
+   ssh 10.10.11.5 "sudo mkdir -p /opt/mode-switch && sudo cp mode-switch-executor.sh /opt/mode-switch/ && sudo chmod 755 /opt/mode-switch/mode-switch-executor.sh"
+   ```
+5. Registrar 1Password secret reference em `.env.op`

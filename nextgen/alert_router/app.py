@@ -10,6 +10,9 @@ import requests
 from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+# Phase 2: mode-switch remote executor
+from executor import get_mode_status, set_mode_normal, ModeStatus
+
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("alert-router")
@@ -121,7 +124,7 @@ def _send_whatsapp(text: str, recipient: str) -> tuple[bool, str]:
     return True, "ok"
 
 
-# ── WhatsApp command parser (Phase 1 — no execution) ─────────────────────────
+# ── WhatsApp command parser (Phase 2 — real execution) ─────────────────────
 
 def _cmd_help() -> str:
     return (
@@ -129,29 +132,87 @@ def _cmd_help() -> str:
         "Comandos disponiveis:\n"
         "  /modo ajuda     — Esta lista\n"
         "  /modo status    — Estado atual do sistema de modos\n"
-        "  /modo normal    — Ativar modo normal *(em breve)*\n"
+        "  /modo normal    — Ativar modo normal *(agora ativo)*\n"
         "  /modo gaming    — Ativar modo gaming *(em breve)*\n\n"
-        "⚠️ Fase 1: canal ativo, execucao das trocas prevista para Fase 2."
+        "✅ Fase 2: execucao real ativa para /modo status e /modo normal."
     )
 
 
 def _cmd_status() -> str:
-    return (
-        "📊 *Modo — Status*\n\n"
-        "🟢 Canal WhatsApp: ATIVO\n"
-        "🟡 Execucao de modos: AGUARDANDO FASE 2\n\n"
-        "Estado atual: *nao implementado ainda*\n"
-        "Cenario ativo: *nao implementado ainda*\n\n"
-        "Para ajuda: /modo ajuda"
-    )
+    """Fetch real mode status from 10.10.11.5 via SSH executor."""
+    try:
+        state = get_mode_status()
+        if state.status == ModeStatus.ERROR:
+            return (
+                "📊 *Modo — Status*\n\n"
+                "🔴 *Erro ao consultar modo-switch*\n"
+                f"Servico: {state.service_status}\n"
+                "Host pode estar temporariamente indisponivel.\n\n"
+                "Para ajuda: /modo ajuda"
+            )
+
+        # Map mode to emoji
+        mode_emoji = {
+            "normal": "🟢",
+            "gaming": "🎮",
+            "unknown": "⚪",
+        }.get(state.current_mode, "⚪")
+
+        return (
+            "📊 *Modo — Status*\n\n"
+            f"{mode_emoji} Modo atual: *{state.current_mode}*\n"
+            f"Servico: {state.service_status}\n\n"
+            "Para ajuda: /modo ajuda"
+        )
+    except Exception as exc:
+        logger.error("mode-switch status error: %s", exc)
+        return (
+            "📊 *Modo — Status*\n\n"
+            "🔴 Erro interno ao consultar status.\n"
+            "Tente novamente em alguns segundos.\n\n"
+            "Para ajuda: /modo ajuda"
+        )
 
 
-def _cmd_not_ready(subcmd: str) -> str:
+def _cmd_normal() -> str:
+    """Execute real mode transition to normal on 10.10.11.5."""
+    try:
+        result = set_mode_normal()
+        if result.success:
+            return (
+                "✅ *Modo — Normal*\n\n"
+                "🟢 Transicao para modo normal *executada*.\n"
+                f"{result.message}\n\n"
+                "Para status: /modo status\n"
+                "Para ajuda: /modo ajuda"
+            )
+        else:
+            return (
+                "❌ *Modo — Normal*\n\n"
+                f"🔴 Falha na execucao: {result.message}\n\n"
+                "Verifique se o host 10.10.11.5 esta acessivel.\n"
+                "Para status: /modo status\n"
+                "Para ajuda: /modo ajuda"
+            )
+    except Exception as exc:
+        logger.error("mode-switch normal error: %s", exc)
+        return (
+            "❌ *Modo — Normal*\n\n"
+            "🔴 Erro interno ao executar transicao.\n"
+            "Tente novamente em alguns segundos.\n\n"
+            "Para ajuda: /modo ajuda"
+        )
+
+
+def _cmd_not_ready_gaming() -> str:
+    """Locked gaming mode — informative only in Phase 2."""
     return (
-        f"⚠️ Comando `/modo {subcmd}` ainda não está ativo.\n"
-        "A execução de troca de modo será habilitada na *Fase 2*.\n\n"
-        "Por enquanto, o canal está funcionando para consulta.\n"
-        "Para status: /modo status\n"
+        "🎮 *Modo — Gaming*\n\n"
+        "⚠️ O comando `/modo gaming` *ainda nao esta ativo*.\n"
+        "Execucao real sera liberada na *Fase 3*.\n\n"
+        "Por enquanto, use:\n"
+        "  /modo status  — consultar estado\n"
+        "  /modo normal  — ativar modo normal\n\n"
         "Para ajuda: /modo ajuda"
     )
 
@@ -161,8 +222,8 @@ _COMMANDS = {
     "modo": {
         "help":    ("/modo ajuda",    _cmd_help),
         "status":  ("/modo status",   _cmd_status),
-        "normal":  ("/modo normal",   _cmd_not_ready),
-        "gaming":  ("/modo gaming",   _cmd_not_ready),
+        "normal":  ("/modo normal",   _cmd_normal),
+        "gaming":  ("/modo gaming",   _cmd_not_ready_gaming),
     },
 }
 
@@ -442,10 +503,7 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
         response_text = _cmd_help()
     else:
         handler_fn = handler_entry[1]
-        if subcmd in ("normal", "gaming"):
-            response_text = _cmd_not_ready(subcmd)
-        else:
-            response_text = handler_fn()
+        response_text = handler_fn()
 
     # ── 7. Send reply via Evolution API ────────────────────────────────────
     ok, reason = _send_whatsapp(response_text, sender)
