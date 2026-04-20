@@ -13,21 +13,13 @@
 set -euo pipefail
 
 # When invoked via forced command with SSH_ORIGINAL_COMMAND:
-# The full command string is available in $SSH_ORIGINAL_COMMAND.
-# Extract the subcommand (second word) if command starts with "mode-switch".
+# Extract the subcommand (second word) from command string.
 VALID_SUBCOMMANDS="status|normal"
 
 determine_subcmd() {
-    local arg1="${1:-}"
-    local arg2="${2:-}"
     local orig="${SSH_ORIGINAL_COMMAND:-}"
-
-    if [[ "$arg1" == "mode-switch" && -n "$arg2" ]]; then
-        echo "$arg2"
-    elif [[ "$orig" =~ ^mode-switch[[:space:]]+(status|normal)$ ]]; then
+    if [[ "$orig" =~ ^mode-switch[[:space:]]+(status|normal)$ ]]; then
         echo "${BASH_REMATCH[1]}"
-    elif [[ "$arg1" =~ ^(status|normal)$ ]]; then
-        echo "$arg1"
     else
         echo ""
     fi
@@ -38,11 +30,10 @@ log() {
 }
 
 audit() {
-    # Write to syslog for audit trail
     logger -t mode-switch -p user.info "audit: user=$USER command='$*' result=$1" 2>/dev/null || true
 }
 
-MODE_ARG="$(determine_subcmd "${1:-}" "${2:-}")"
+MODE_ARG="$(determine_subcmd)"
 
 if [[ -z "$MODE_ARG" ]]; then
     echo "ERROR: Invalid or empty command. Allowed: status, normal"
@@ -61,34 +52,43 @@ audit "command_accepted"
 case "$MODE_ARG" in
     status)
         audit "status_requested"
-        log "Status query received"
+        log "Status query received - delegating to real mode-switch"
 
-        # Check if mode-switch systemd service exists
-        if systemctl is-active --quiet mode-switch 2>/dev/null; then
-            SERVICE_STATUS="active"
-        elif systemctl is-enabled --quiet mode-switch 2>/dev/null; then
-            SERVICE_STATUS="enabled (inactive)"
-        else
-            SERVICE_STATUS="not_found"
+        # Call the real mode-switch command and capture output
+        REAL_OUTPUT=$(/usr/local/bin/mode-switch status 2>&1)
+        REAL_EXIT=$?
+
+        if [[ $REAL_EXIT -ne 0 ]]; then
+            echo "ERROR: mode-switch status failed with exit code $REAL_EXIT"
+            audit "status_failed"
+            exit 1
         fi
 
-        # Try to get current mode from ConfigMap or service state
-        CURRENT_MODE="unknown"
-        if command -v systemctl &>/dev/null; then
-            if [[ -f /etc/mode-switch/current ]]; then
-                CURRENT_MODE="$(cat /etc/mode-switch/current 2>/dev/null || echo 'unknown')"
-            fi
-        fi
+        # Parse real output for structured fields (strip ANSI color codes)
+        # Real output format:
+        #   Current desired mode: [0;32mnormal[0m
+        #   Actual system state: [1;33mnormal (MicroK8s running) [node Ready][0m
+        #   Alignment: [0;32maligned[0m
 
-        # If no state file, try to detect from running processes or config
-        if [[ "$CURRENT_MODE" == "unknown" ]]; then
-            # Check if there's a litellm or ollama config indicating mode
-            CURRENT_MODE="normal"  # default assumption
-        fi
+        strip_ansi() { sed 's/\x1b\[[0-9;]*m//g'; }
 
+        DESIRED_MODE=$(echo "$REAL_OUTPUT" | grep "Current desired mode:" | sed 's/.*: *//' | strip_ansi)
+        SYSTEM_STATE=$(echo "$REAL_OUTPUT" | grep "Actual system state:" | sed 's/  Actual system state: *//' | strip_ansi)
+        ALIGNMENT=$(echo "$REAL_OUTPUT" | grep "Alignment:" | sed 's/  Alignment: *//' | strip_ansi)
+
+        # Map alignment to service status
+        case "$ALIGNMENT" in
+            aligned) SERVICE_STATUS="active" ;;
+            misaligned) SERVICE_STATUS="misaligned" ;;
+            *) SERVICE_STATUS="unknown" ;;
+        esac
+
+        # Output structured format for executor.py to parse
         echo "OK"
         echo "service=$SERVICE_STATUS"
-        echo "mode=$CURRENT_MODE"
+        echo "mode=$DESIRED_MODE"
+        echo "alignment=$ALIGNMENT"
+        echo "raw_output_lines=3"
         audit "status_response_ok"
         ;;
 
@@ -96,28 +96,29 @@ case "$MODE_ARG" in
         audit "normal_requested"
         log "Normal mode transition requested"
 
-        # Write state file if directory exists and is writable
-        if [[ -d /etc/mode-switch ]] && [[ -w /etc/mode-switch/current ]]; then
-            echo "normal" > /etc/mode-switch/current
-            systemctl restart mode-switch 2>/dev/null || true
-            TRANSITION_STATUS="executed"
-        elif [[ -d /etc/mode-switch ]]; then
-            # Directory exists but file not writable, try sudo
-            if sudo tee /etc/mode-switch/current > /dev/null 2>&1 <<< "normal"; then
-                sudo systemctl restart mode-switch 2>/dev/null || true
-                TRANSITION_STATUS="executed"
-            else
-                TRANSITION_STATUS="accepted"
-            fi
-        else
-            # No systemd service - create state file in tmp (idempotent)
-            TRANSITION_STATUS="accepted"
+        # Call the real mode-switch command
+        REAL_OUTPUT=$(/usr/local/bin/mode-switch switch normal 2>&1)
+        REAL_EXIT=$?
+
+        if [[ $REAL_EXIT -ne 0 ]]; then
+            echo "ERROR: mode-switch switch normal failed with exit code $REAL_EXIT"
+            echo "Output: $REAL_OUTPUT"
+            audit "normal_failed"
+            exit 1
         fi
 
-        echo "OK"
-        echo "transition=normal"
-        echo "status=$TRANSITION_STATUS"
-        audit "normal_executed_$TRANSITION_STATUS"
+        # Check if actually switched or already in normal
+        if echo "$REAL_OUTPUT" | grep -qi "already"; then
+            echo "OK"
+            echo "transition=normal"
+            echo "status=already_set"
+            audit "normal_already_set"
+        else
+            echo "OK"
+            echo "transition=normal"
+            echo "status=switched"
+            audit "normal_switched"
+        fi
         ;;
 
     *)

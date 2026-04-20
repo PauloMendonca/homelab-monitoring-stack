@@ -145,9 +145,8 @@ def _cmd_status() -> str:
         if state.status == ModeStatus.ERROR:
             return (
                 "📊 *Modo — Status*\n\n"
-                "🔴 *Erro ao consultar modo-switch*\n"
-                f"Servico: {state.service_status}\n"
-                "Host pode estar temporariamente indisponivel.\n\n"
+                "🔴 *Erro ao consultar mode-switch*\n"
+                f"Host pode estar temporariamente indisponivel.\n\n"
                 "Para ajuda: /modo ajuda"
             )
 
@@ -158,10 +157,17 @@ def _cmd_status() -> str:
             "unknown": "⚪",
         }.get(state.current_mode, "⚪")
 
+        # Map alignment to indicator (simplified - just show service status)
+        service_indicator = {
+            "active": "✅ Servico ativo",
+            "misaligned": "⚠️ Desalinhado",
+            "unknown": "⚪ Estado desconhecido",
+        }.get(state.service_status, f"INFO: {state.service_status}")
+
         return (
             "📊 *Modo — Status*\n\n"
             f"{mode_emoji} Modo atual: *{state.current_mode}*\n"
-            f"Servico: {state.service_status}\n\n"
+            f"{service_indicator}\n\n"
             "Para ajuda: /modo ajuda"
         )
     except Exception as exc:

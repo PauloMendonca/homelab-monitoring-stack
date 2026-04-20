@@ -174,10 +174,10 @@ def set_mode_normal() -> ModeTransitionResult:
         elif line.startswith("status="):
             status = line.split("=", 1)[1].strip()
 
-    if transition == "normal" and status in ("executed", "accepted"):
+    if transition == "normal" and status in ("executed", "accepted", "already_set", "switched"):
         return ModeTransitionResult(
             success=True,
-            message="Transicao para modo normal aplicada",
+            message="Modo normal ok",
             raw_output=stdout,
         )
 
