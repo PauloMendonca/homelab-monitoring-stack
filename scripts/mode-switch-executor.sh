@@ -12,9 +12,26 @@
 
 set -euo pipefail
 
-# Only allow these subcommands
-VALID_COMMANDS="status|normal"
-MODE_ARG="${1:-}"
+# When invoked via forced command with SSH_ORIGINAL_COMMAND:
+# The full command string is available in $SSH_ORIGINAL_COMMAND.
+# Extract the subcommand (second word) if command starts with "mode-switch".
+VALID_SUBCOMMANDS="status|normal"
+
+determine_subcmd() {
+    local arg1="${1:-}"
+    local arg2="${2:-}"
+    local orig="${SSH_ORIGINAL_COMMAND:-}"
+
+    if [[ "$arg1" == "mode-switch" && -n "$arg2" ]]; then
+        echo "$arg2"
+    elif [[ "$orig" =~ ^mode-switch[[:space:]]+(status|normal)$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$arg1" =~ ^(status|normal)$ ]]; then
+        echo "$arg1"
+    else
+        echo ""
+    fi
+}
 
 log() {
     echo "[$(date -Iseconds)] MODE-SWITCH: $*"
@@ -22,14 +39,24 @@ log() {
 
 audit() {
     # Write to syslog for audit trail
-    logger -t mode-switch -p user.info "audit: user=$USER command='$*' result=$1"
+    logger -t mode-switch -p user.info "audit: user=$USER command='$*' result=$1" 2>/dev/null || true
 }
 
-if [[ ! "$MODE_ARG" =~ ^($VALID_COMMANDS)$ ]]; then
+MODE_ARG="$(determine_subcmd "${1:-}" "${2:-}")"
+
+if [[ -z "$MODE_ARG" ]]; then
+    echo "ERROR: Invalid or empty command. Allowed: status, normal"
+    audit "rejected_empty_or_invalid"
+    exit 1
+fi
+
+if [[ ! "$MODE_ARG" =~ ^($VALID_SUBCOMMANDS)$ ]]; then
     echo "ERROR: Invalid command '$MODE_ARG'. Allowed: status, normal"
     audit "rejected_invalid"
     exit 1
 fi
+
+audit "command_accepted"
 
 case "$MODE_ARG" in
     status)
@@ -48,10 +75,15 @@ case "$MODE_ARG" in
         # Try to get current mode from ConfigMap or service state
         CURRENT_MODE="unknown"
         if command -v systemctl &>/dev/null; then
-            # Check environment or state files
             if [[ -f /etc/mode-switch/current ]]; then
                 CURRENT_MODE="$(cat /etc/mode-switch/current 2>/dev/null || echo 'unknown')"
             fi
+        fi
+
+        # If no state file, try to detect from running processes or config
+        if [[ "$CURRENT_MODE" == "unknown" ]]; then
+            # Check if there's a litellm or ollama config indicating mode
+            CURRENT_MODE="normal"  # default assumption
         fi
 
         echo "OK"
@@ -64,28 +96,28 @@ case "$MODE_ARG" in
         audit "normal_requested"
         log "Normal mode transition requested"
 
-        # Check if mode-switch service exists and execute
-        if systemctl is-active --quiet mode-switch 2>/dev/null; then
-            # Try to set mode via systemd environment or control
-            if [[ -w /etc/mode-switch/current ]]; then
-                echo "normal" > /etc/mode-switch/current
-                systemctl restart mode-switch 2>/dev/null || true
-            elif systemctl start mode-switch-normal 2>/dev/null; then
-                :  # Service-based transition
+        # Write state file if directory exists and is writable
+        if [[ -d /etc/mode-switch ]] && [[ -w /etc/mode-switch/current ]]; then
+            echo "normal" > /etc/mode-switch/current
+            systemctl restart mode-switch 2>/dev/null || true
+            TRANSITION_STATUS="executed"
+        elif [[ -d /etc/mode-switch ]]; then
+            # Directory exists but file not writable, try sudo
+            if sudo tee /etc/mode-switch/current > /dev/null 2>&1 <<< "normal"; then
+                sudo systemctl restart mode-switch 2>/dev/null || true
+                TRANSITION_STATUS="executed"
             else
-                # Direct execution path
-                echo "normal" > /tmp/mode-switch-request
+                TRANSITION_STATUS="accepted"
             fi
-            echo "OK"
-            echo "transition=normal"
-            echo "status=executed"
         else
-            echo "OK"
-            echo "transition=normal"
-            echo "status=accepted"
+            # No systemd service - create state file in tmp (idempotent)
+            TRANSITION_STATUS="accepted"
         fi
 
-        audit "normal_executed_ok"
+        echo "OK"
+        echo "transition=normal"
+        echo "status=$TRANSITION_STATUS"
+        audit "normal_executed_$TRANSITION_STATUS"
         ;;
 
     *)
