@@ -41,7 +41,7 @@ _PHASE3_LOCK = threading.Lock()
 _PENDING_GAMING: dict[str, dict] = {}
 
 
-# ── Phase 3 helpers ───────────────────────────────────────────────────────────
+# ── Phase 3 helpers (thread-safe, lock-protected) ─────────────────────────────
 
 def _generate_code() -> str:
     """Generate a random 6-digit confirmation code."""
@@ -49,32 +49,33 @@ def _generate_code() -> str:
 
 
 def _is_gaming_cooldown_active() -> bool:
-    """Check if gaming mode is in cooldown period since last execution."""
-    global _PHASE3_LAST_GAMING_EXEC
-    if _PHASE3_LAST_GAMING_EXEC is None:
-        return False
-    elapsed = time.time() - _PHASE3_LAST_GAMING_EXEC
-    return elapsed < _PHASE3_GAMING_COOLDOWN_SECONDS
+    """Thread-safe check if gaming mode is in cooldown period since last execution."""
+    with _PHASE3_LOCK:
+        if _PHASE3_LAST_GAMING_EXEC is None:
+            return False
+        elapsed = time.time() - _PHASE3_LAST_GAMING_EXEC
+        return elapsed < _PHASE3_GAMING_COOLDOWN_SECONDS
 
 
 def _cooldown_remaining() -> int:
-    """Return seconds remaining in cooldown, or 0 if not in cooldown."""
-    global _PHASE3_LAST_GAMING_EXEC
-    if _PHASE3_LAST_GAMING_EXEC is None:
-        return 0
-    elapsed = time.time() - _PHASE3_LAST_GAMING_EXEC
-    remaining = _PHASE3_GAMING_COOLDOWN_SECONDS - elapsed
-    return max(0, int(remaining))
+    """Thread-safe return of seconds remaining in cooldown, or 0 if not in cooldown."""
+    with _PHASE3_LOCK:
+        if _PHASE3_LAST_GAMING_EXEC is None:
+            return 0
+        elapsed = time.time() - _PHASE3_LAST_GAMING_EXEC
+        remaining = _PHASE3_GAMING_COOLDOWN_SECONDS - elapsed
+        return max(0, int(remaining))
 
 
 def _set_gaming_executed() -> None:
-    """Record that gaming mode was executed, starting cooldown."""
-    global _PHASE3_LAST_GAMING_EXEC
-    _PHASE3_LAST_GAMING_EXEC = time.time()
+    """Thread-safe record that gaming mode was executed, starting cooldown."""
+    with _PHASE3_LOCK:
+        global _PHASE3_LAST_GAMING_EXEC
+        _PHASE3_LAST_GAMING_EXEC = time.time()
 
 
-def _cleanup_expired_pending() -> None:
-    """Remove any expired pending gaming confirmations."""
+def _cleanup_expired_pending_unlocked() -> None:
+    """Remove any expired pending gaming confirmations. Caller must hold lock."""
     now = time.time()
     expired = [
         sender for sender, data in _PENDING_GAMING.items()
@@ -86,59 +87,58 @@ def _cleanup_expired_pending() -> None:
 
 
 def _create_pending_gaming(sender: str) -> str:
-    """Create a new pending gaming confirmation. Returns the code."""
-    _cleanup_expired_pending()
+    """Thread-safe create a new pending gaming confirmation. Returns the code."""
     code = _generate_code()
-    _PENDING_GAMING[sender] = {
-        "code": code,
-        "expires_at": time.time() + _PHASE3_CONFIRM_TTL_SECONDS,
-        "sender": sender,
-    }
-    logger.info(
-        "gaming confirm pending for %s (expires in %ds)",
-        _mask_number(sender),
-        _PHASE3_CONFIRM_TTL_SECONDS,
-    )
+    with _PHASE3_LOCK:
+        _cleanup_expired_pending_unlocked()
+        _PENDING_GAMING[sender] = {
+            "code": code,
+            "expires_at": time.time() + _PHASE3_CONFIRM_TTL_SECONDS,
+            "sender": sender,
+        }
+        logger.info(
+            "gaming confirm pending for %s (expires in %ds)",
+            _mask_number(sender),
+            _PHASE3_CONFIRM_TTL_SECONDS,
+        )
     return code
 
 
 def _validate_gaming_confirm(sender: str, code: str) -> bool:
-    """Validate a gaming confirmation code. Removes entry on use."""
-    _cleanup_expired_pending()
-    pending = _PENDING_GAMING.get(sender)
-    if not pending:
-        return False
-    if pending.get("code") != code:
-        return False
-    # One-time use
-    del _PENDING_GAMING[sender]
-    return True
+    """Thread-safe validate a gaming confirmation code. Removes entry on use."""
+    with _PHASE3_LOCK:
+        _cleanup_expired_pending_unlocked()
+        pending = _PENDING_GAMING.get(sender)
+        if not pending:
+            return False
+        if pending.get("code") != code:
+            return False
+        # One-time use — remove entry
+        del _PENDING_GAMING[sender]
+        return True
 
 
 def _cancel_pending_gaming(sender: str) -> bool:
-    """Cancel any pending gaming confirmation for sender. Returns True if existed."""
-    if sender in _PENDING_GAMING:
-        del _PENDING_GAMING[sender]
-        logger.info("gaming confirm cancelled for %s", _mask_number(sender))
-        return True
-    return False
+    """Thread-safe cancel any pending gaming confirmation for sender."""
+    with _PHASE3_LOCK:
+        if sender in _PENDING_GAMING:
+            del _PENDING_GAMING[sender]
+            logger.info("gaming confirm cancelled for %s", _mask_number(sender))
+            return True
+        return False
 
 
 def _has_pending_gaming(sender: str) -> tuple[bool, int]:
-    """Check if sender has a pending gaming confirmation.
+    """Thread-safe check if sender has a pending gaming confirmation.
     Returns (has_pending, seconds_until_expiry).
     """
-    _cleanup_expired_pending()
-    pending = _PENDING_GAMING.get(sender)
-    if not pending:
-        return False, 0
-    remaining = int(pending.get("expires_at", 0) - time.time())
-    return True, max(0, remaining)
-
-
-def _set_sender_context(handler_fn, sender: str) -> None:
-    """Inject sender into handler function for Phase 3 commands that need sender identity."""
-    handler_fn._sender = sender
+    with _PHASE3_LOCK:
+        _cleanup_expired_pending_unlocked()
+        pending = _PENDING_GAMING.get(sender)
+        if not pending:
+            return False, 0
+        remaining = int(pending.get("expires_at", 0) - time.time())
+        return True, max(0, remaining)
 
 
 def _mask_number(number: str) -> str:
@@ -327,33 +327,12 @@ def _cmd_normal() -> str:
         )
 
 
-def _cmd_not_ready_gaming() -> str:
-    """Locked gaming mode — informative only in Phase 2."""
-    return (
-        "🎮 *Modo — Gaming*\n\n"
-        "⚠️ O comando `/modo gaming` *ainda nao esta ativo*.\n"
-        "Execucao real sera liberada na *Fase 3*.\n\n"
-        "Por enquanto, use:\n"
-        "  /modo status  — consultar estado\n"
-        "  /modo normal  — ativar modo normal\n\n"
-        "Para ajuda: /modo ajuda"
-    )
-
-
-def _cmd_gaming_request() -> str:
+def _cmd_gaming_request(sender: str) -> str:
     """
     Phase 3: Handle /modo gaming request.
     If flag is OFF: blocked, informative.
     If flag is ON: initiate confirmation flow (generate code, send to user).
     """
-    sender = getattr(_cmd_gaming_request, "_sender", None)
-    if sender is None:
-        return (
-            "🎮 *Modo — Gaming*\n\n"
-            "⚠️ Erro interno: sender nao identificado.\n\n"
-            "Para ajuda: /modo ajuda"
-        )
-
     # Check if feature flag is enabled
     if not _PHASE3_GAMING_ENABLED:
         logger.info("gaming request blocked by flag OFF for %s", _mask_number(sender))
@@ -410,19 +389,11 @@ def _cmd_gaming_request() -> str:
     )
 
 
-def _cmd_confirmar(code: str = "") -> str:
+def _cmd_confirmar(sender: str, code: str = "") -> str:
     """
     Phase 3: Handle /modo confirmar <codigo>.
     Validates code and executes gaming mode if correct.
     """
-    sender = getattr(_cmd_confirmar, "_sender", None)
-    if sender is None:
-        return (
-            "🔑 *Confirmar*\n\n"
-            "⚠️ Erro interno: sender nao identificado.\n\n"
-            "Para ajuda: /modo ajuda"
-        )
-
     if not _PHASE3_GAMING_ENABLED:
         logger.info("confirm attempt blocked by flag OFF for %s", _mask_number(sender))
         return (
@@ -431,7 +402,7 @@ def _cmd_confirmar(code: str = "") -> str:
             "Para ajuda: /modo ajuda"
         )
 
-    # Validate code
+    # Validate code format
     if not code or len(code) != 6 or not code.isdigit():
         logger.warning("confirm invalid code format from %s", _mask_number(sender))
         return (
@@ -440,7 +411,7 @@ def _cmd_confirmar(code: str = "") -> str:
             "Para ajuda: /modo ajuda"
         )
 
-    # Check cooldown first
+    # Check cooldown first (before validating code to avoid timing leak)
     if _is_gaming_cooldown_active():
         remaining = _cooldown_remaining()
         logger.info("confirm blocked by cooldown for %s", _mask_number(sender))
@@ -450,7 +421,7 @@ def _cmd_confirmar(code: str = "") -> str:
             "Para ajuda: /modo ajuda"
         )
 
-    # Validate the confirmation code
+    # Validate the confirmation code (thread-safe, removes entry on use)
     if not _validate_gaming_confirm(sender, code):
         logger.warning("confirm wrong/expired code from %s", _mask_number(sender))
         return (
@@ -460,31 +431,41 @@ def _cmd_confirmar(code: str = "") -> str:
             "Para ajuda: /modo ajuda"
         )
 
-    # Code valid — execute gaming transition
+    # Code valid — execute gaming transition (locked section)
     logger.info("confirm code accepted for %s — executing gaming", _mask_number(sender))
 
     try:
-        result = set_mode_gaming()
-        if result.success:
-            _set_gaming_executed()
-            logger.info("gaming mode executed successfully for %s", _mask_number(sender))
-            return (
-                "🎮 *Modo — Gaming*\n\n"
-                "✅ Modo gaming *ativado*.\n"
-                "MicroK8s sera desligado em instantes.\n"
-                "Recursos de GPU liberados para gaming.\n\n"
-                "Para voltar ao normal: `/modo normal`\n"
-                "Para ajuda: /modo ajuda"
-            )
-        else:
-            logger.error("gaming execution failed for %s: %s", _mask_number(sender), result.message)
-            return (
-                "🎮 *Modo — Gaming*\n\n"
-                f"❌ Falha ao ativar gaming: {result.message}\n\n"
-                "Tente `/modo normal` para recuperar estado.\n"
-                "Se o problema persistir, execute manualmente no host.\n\n"
-                "Para ajuda: /modo ajuda"
-            )
+        with _PHASE3_LOCK:
+            # Double-check cooldown under lock (belt-and-suspenders)
+            if _is_gaming_cooldown_active():
+                remaining = _cooldown_remaining()
+                logger.warning("cooldown became active during confirm for %s", _mask_number(sender))
+                return (
+                    "🔑 *Confirmar*\n\n"
+                    f"⏳ Gaming em cooldown — *{remaining}s* restantes.\n\n"
+                    "Para ajuda: /modo ajuda"
+                )
+            result = set_mode_gaming()
+            if result.success:
+                _set_gaming_executed()
+                logger.info("gaming mode executed successfully for %s", _mask_number(sender))
+                return (
+                    "🎮 *Modo — Gaming*\n\n"
+                    "✅ Modo gaming *ativado*.\n"
+                    "MicroK8s sera desligado em instantes.\n"
+                    "Recursos de GPU liberados para gaming.\n\n"
+                    "Para voltar ao normal: `/modo normal`\n"
+                    "Para ajuda: /modo ajuda"
+                )
+            else:
+                logger.error("gaming execution failed for %s: %s", _mask_number(sender), result.message)
+                return (
+                    "🎮 *Modo — Gaming*\n\n"
+                    f"❌ Falha ao ativar gaming: {result.message}\n\n"
+                    "Tente `/modo normal` para recuperar estado.\n"
+                    "Se o problema persistir, execute manualmente no host.\n\n"
+                    "Para ajuda: /modo ajuda"
+                )
     except Exception as exc:
         logger.error("gaming execution exception for %s: %s", _mask_number(sender), exc)
         return (
@@ -495,19 +476,11 @@ def _cmd_confirmar(code: str = "") -> str:
         )
 
 
-def _cmd_cancelar() -> str:
+def _cmd_cancelar(sender: str) -> str:
     """
     Phase 3: Handle /modo cancelar.
     Cancels any pending gaming confirmation for the sender.
     """
-    sender = getattr(_cmd_cancelar, "_sender", None)
-    if sender is None:
-        return (
-            "❌ *Cancelar*\n\n"
-            "⚠️ Erro interno: sender nao identificado.\n\n"
-            "Para ajuda: /modo ajuda"
-        )
-
     if not _PHASE3_GAMING_ENABLED:
         return (
             "❌ *Cancelar*\n\n"
@@ -822,12 +795,11 @@ async def whatsapp_inbound(request: Request, x_evolution_webhook_secret: str | N
         response_text = _cmd_help()
     else:
         handler_fn = handler_entry[1]
-        # Inject sender context for Phase 3 handlers that need it
-        if subcmd in ("gaming", "confirmar", "cancelar"):
-            _set_sender_context(handler_fn, sender)
-
-        if subcmd == "confirmar":
-            response_text = handler_fn(extra_arg)
+        # Pass sender explicitly for Phase 3 handlers (thread-safe, no attribute injection)
+        if subcmd in ("gaming", "confirmar"):
+            response_text = handler_fn(sender, extra_arg)
+        elif subcmd == "cancelar":
+            response_text = handler_fn(sender)
         else:
             response_text = handler_fn()
 
