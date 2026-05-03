@@ -12,6 +12,7 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/rules:/etc/prometheus/rules:ro
       - ./prometheus/targets:/etc/prometheus/targets:ro
+      - ${K8S_TOKEN_FILE:-/dev/shm/monitoring-stack/k8s-kubelet-token}:/etc/prometheus/secrets/k8s-kubelet-token:ro
       - /mnt/pool_fast/db/monitoring/prometheus:/prometheus
     ports:
       - "9090:9090"
@@ -23,6 +24,25 @@ services:
       - cadvisor
       - snmp-exporter
       - pfsense-gateway-exporter
+      - smartctl-exporter
+      - victoriametrics
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.118.0
+    container_name: victoriametrics
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/victoria-metrics-data
+      - -retentionPeriod=${VM_RETENTION:-10y}
+      - -httpListenAddr=:8428
+      - -search.latencyOffset=30s
+      - -search.maxUniqueTimeseries=300000
+    volumes:
+      - /mnt/pool_fast/db/monitoring/victoriametrics:/victoria-metrics-data
+    ports:
+      - "8428:8428"
+    networks:
+      - monitoring
 
   alertmanager:
     image: quay.io/prometheus/alertmanager:v0.28.0
@@ -59,6 +79,7 @@ services:
       - monitoring
     depends_on:
       - prometheus
+      - victoriametrics
 
   grafana-mcp:
     profiles:
@@ -154,14 +175,13 @@ services:
     networks:
       - monitoring
 
-
   pfsense-wan-guard:
     build:
       context: ./wan-guard
     container_name: pfsense-wan-guard
     restart: unless-stopped
     environment:
-      - PROMETHEUS_URL=http://prometheus:9090
+      - PROMETHEUS_URL=http://victoriametrics:8428
       - POLL_INTERVAL_SECONDS=15
       - DISABLE_LOSS_PERCENT=20
       - DISABLE_FOR_SECONDS=30
@@ -184,7 +204,37 @@ services:
       - monitoring
     depends_on:
       - prometheus
+      - victoriametrics
       - pfsense-gateway-exporter
+
+  deye-exporter:
+    build:
+      context: ./deye-exporter
+    container_name: deye-exporter
+    restart: unless-stopped
+    environment:
+      - DEYE_INVERTERS=${DEYE_INVERTERS}
+      - DEYE_POLL_INTERVAL=${DEYE_POLL_INTERVAL:-30}
+      - LOG_LEVEL=${DEYE_LOG_LEVEL:-INFO}
+    expose:
+      - "9877"
+    networks:
+      - monitoring
+
+  smartctl-exporter:
+    build:
+      context: ./smartctl-exporter
+    container_name: smartctl-exporter
+    restart: unless-stopped
+    # Pass host's /dev/disk/* and smartctl access via privileged container
+    privileged: true
+    volumes:
+      - /dev/disk/by-id:/dev/disk/by-id:ro
+      - /run/udev:/run/udev:ro
+    ports:
+      - "9633:9633"
+    networks:
+      - monitoring
 
   alert-router:
     profiles:
