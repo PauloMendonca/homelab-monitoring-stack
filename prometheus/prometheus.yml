@@ -25,6 +25,14 @@ scrape_configs:
     static_configs:
       - targets: ["blackbox-exporter:9115"]
 
+  - job_name: litellm-metrics
+    static_configs:
+      - targets: ["10.10.11.203:9090"]
+        labels:
+          service: litellm
+          role: ai-gateway
+          host: litellm
+
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]

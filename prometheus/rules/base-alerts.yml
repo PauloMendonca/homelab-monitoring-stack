@@ -2,7 +2,7 @@ groups:
   - name: infrastructure-base
     rules:
       - alert: TargetDown
-        expr: up{job!="pfsense-snmp"} == 0
+        expr: up{job!="pfsense-snmp",job!="litellm-metrics"} == 0
         for: 2m
         labels:
           severity: important
@@ -11,13 +11,40 @@ groups:
           description: "Target {{ $labels.instance }} esta down ha mais de 2 minutos."
 
       - alert: ProbeFailed
-        expr: probe_success == 0
+        expr: probe_success{group!~"ai-gateway|ai-mcp-critical"} == 0
         for: 2m
         labels:
           severity: important
         annotations:
           summary: "Probe falhou ({{ $labels.instance }})"
           description: "O probe Blackbox para {{ $labels.instance }} falhou por mais de 2 minutos."
+
+      - alert: LiteLLMEndpointDown
+        expr: probe_success{job="blackbox-http",endpoint="litellm-readiness"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LiteLLM indisponivel"
+          description: "O endpoint de readiness do LiteLLM ({{ $labels.instance }}) falhou por mais de 2 minutos."
+
+      - alert: CriticalMcpEndpointDown
+        expr: probe_success{job="blackbox-http",group="ai-mcp-critical"} == 0
+        for: 3m
+        labels:
+          severity: important
+        annotations:
+          summary: "MCP critico indisponivel ({{ $labels.service }})"
+          description: "O endpoint MCP {{ $labels.service }} ({{ $labels.instance }}) falhou por mais de 3 minutos."
+
+      - alert: LiteLLMMetricsTargetDown
+        expr: up{job="litellm-metrics"} == 0
+        for: 3m
+        labels:
+          severity: important
+        annotations:
+          summary: "Metricas do LiteLLM indisponiveis"
+          description: "Prometheus nao consegue coletar metricas do LiteLLM em {{ $labels.instance }} ha mais de 3 minutos."
 
       - alert: WanGatewayDown
         expr: max by (gateway) (pfsense_gateway_up{gateway=~"WAN_VERO_DHCP|WAN_VIVO_DHCP|WAN_NETMINAS_DHCP|WAN_VALENET_DHCP"}) == 0
