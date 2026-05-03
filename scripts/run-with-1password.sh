@@ -3,14 +3,17 @@
 # run-with-1password.sh — Launch monitoring-stack with secrets from 1Password.
 #
 # Secrets are resolved in-memory by `op run --env-file` and NEVER touch disk,
-# EXCEPT the K8s kubelet bearer token which is materialized to a tmpfs file
-# (/dev/shm/monitoring-stack/k8s-kubelet-token) so Prometheus can consume it
-# via bearer_token_file.
+# EXCEPT secrets that must be exposed as files for legacy consumers:
+#   - K8s kubelet bearer token -> tmpfs file so Prometheus can use
+#     bearer_token_file.
+#   - pfSense monitoring SSH private key -> tmpfs file so Docker bind mounts
+#     can pass it to exporter and WAN guard without a long-lived plaintext key
+#     in the repo.
 #
-# Token file lifecycle:
+# Tmpfs file lifecycle:
 #   - Created on "up" commands, persists for the lifetime of the stack.
 #   - Removed on "down" commands, ensuring clean teardown.
-#   - /dev/shm is tmpfs, so the file never survives a reboot.
+#   - /dev/shm is tmpfs, so the files never survive a reboot.
 #
 # Non-secret static config lives in .env.nonsecret (committed).
 #
@@ -56,7 +59,7 @@ fi
 # ── Launch via op run ──────────────────────────────────────────────────────
 # op run resolves all op:// refs in .env.op and exports them as env vars.
 # The inner launcher (_launch-compose.sh):
-#   - "up": materializes K8S_KUBELET_TOKEN to tmpfs, then starts compose
-#   - "down": stops compose, then cleans up the tmpfs token
+#   - "up": materializes file-backed secrets to tmpfs, then starts compose
+#   - "down": stops compose, then cleans up the tmpfs files
 #   - other: passes through to docker compose (token file stays if it exists)
 "$OP_BIN" run --env-file=.env.op -- bash scripts/_launch-compose.sh "$@"

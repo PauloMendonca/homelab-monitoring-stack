@@ -45,6 +45,8 @@ sudo docker compose --profile mcp --env-file .env.runtime up -d --build
 Observacoes:
 - `.env.op` e `.env.runtime` estao no `.gitignore`.
 - Nao comitar token de Service Account nem valores secretos em plaintext.
+- A chave SSH privada do monitoramento pfSense deve vir do 1Password e ser
+  materializada apenas em tmpfs pelo launcher (`/dev/shm/monitoring-stack`).
 
 ## Grafana MCP (profile `mcp`)
 - O container usa `grafana/mcp-grafana` em modo `streamable-http` com endpoint `/mcp`.
@@ -72,6 +74,13 @@ curl -s http://127.0.0.1:8010/healthz
 - Atualize o target SNMP em `prometheus/prometheus.yml` (job `pfsense-snmp`).
 - Ajuste comunidade/auth SNMP no `snmp-exporter` conforme politica de seguranca.
 - Recomendado SNMPv3 + ACL para IP do TrueNAS.
+- O private key usado por `pfsense-gateway-exporter` e `pfsense-wan-guard`
+  deve ser referenciado em `.env.op` como `PFSENSE_SSH_PRIVATE_KEY` (campo
+  `password` do item `monitoring-env/pfsense_ssh_private_key` no 1Password).
+  O launcher materializa esse
+  valor em `${PFSENSE_SSH_KEY_FILE:-/dev/shm/monitoring-stack/pfsense_monitoring_rsa}`.
+- `secrets/known_hosts` continua sendo o arquivo pinado de host keys e nao deve
+  ser substituido por bypass de verificacao.
 
 ## WAN Guard automatico
 - Container `pfsense-wan-guard` consulta o endpoint Prometheus-compatible do VictoriaMetrics.

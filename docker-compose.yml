@@ -168,7 +168,7 @@ services:
       - PF_KNOWN_HOSTS_PATH=/run/secrets/known_hosts
       - PF_GATEWAY_CMD=pfSsh.php playback gatewaystatus
     volumes:
-      - ./secrets/pfsense_monitoring_rsa:/run/secrets/pfsense_id_rsa:ro
+      - ${PFSENSE_SSH_KEY_FILE:-/dev/shm/monitoring-stack/pfsense_monitoring_rsa}:/run/secrets/pfsense_id_rsa:ro
       - ./secrets/known_hosts:/run/secrets/known_hosts:ro
     expose:
       - "9940"
@@ -196,7 +196,7 @@ services:
       - PF_KNOWN_HOSTS_PATH=/run/secrets/known_hosts
       - METRICS_PORT=9950
     volumes:
-      - ./secrets/pfsense_monitoring_rsa:/run/secrets/pfsense_id_rsa:ro
+      - ${PFSENSE_SSH_KEY_FILE:-/dev/shm/monitoring-stack/pfsense_monitoring_rsa}:/run/secrets/pfsense_id_rsa:ro
       - ./secrets/known_hosts:/run/secrets/known_hosts:ro
     expose:
       - "9950"
