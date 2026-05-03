@@ -1,7 +1,8 @@
 # Monitoring Stack (TrueNAS)
 
 Servicos:
-- Prometheus: http://10.10.11.2:9090
+- VictoriaMetrics (backend de consulta): http://10.10.11.2:8428
+- Prometheus (scrape/alerting): http://10.10.11.2:9090
 - Alertmanager: http://10.10.11.2:9093
 - Grafana: http://10.10.11.2:3000
 - Grafana MCP (profile `mcp`): http://10.10.11.2:8010/mcp
@@ -54,10 +55,11 @@ Observacoes:
 ## Validar
 ```bash
 sudo docker compose ps
+curl -s http://127.0.0.1:8428/health
 curl -s http://127.0.0.1:9090/-/ready
 curl -s http://127.0.0.1:9093/-/ready
 curl -s http://127.0.0.1:3000/api/health
-curl -s 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22cadvisor%22%7D'
+curl -s 'http://127.0.0.1:8428/api/v1/query?query=up%7Bjob%3D%22cadvisor%22%7D'
 # se profile mcp estiver ativo
 curl -s http://127.0.0.1:8010/healthz
 ```
@@ -72,10 +74,14 @@ curl -s http://127.0.0.1:8010/healthz
 - Recomendado SNMPv3 + ACL para IP do TrueNAS.
 
 ## WAN Guard automatico
-- Container `pfsense-wan-guard` monitora `pfsense_gateway_loss_percent` no Prometheus.
+- Container `pfsense-wan-guard` consulta o endpoint Prometheus-compatible do VictoriaMetrics.
 - Regras aplicadas: disable com loss >= 20% por 30s; reavaliacao apos cooldown de 5m; confirmacao de enable com loss == 0 por 1m em janela de probe.
 - Em falha simultanea das duas WANs, prioriza desabilitar apenas `WAN_NETMINAS_DHCP`.
 - Metricas do guard em `pfsense-wan-guard:9950/metrics`.
+
+## Arquitetura de metricas
+- **Prometheus** continua responsavel por scraping e avaliacao de regras/alertas.
+- **VictoriaMetrics** e o backend autoritativo de consulta para Grafana e consumidores que fazem consultas Prometheus API.
 
 ## Proxima geracao de notificacoes
 - Implementacao base em `nextgen/`.

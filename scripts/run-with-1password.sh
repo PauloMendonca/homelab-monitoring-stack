@@ -2,7 +2,16 @@
 # ---------------------------------------------------------------------------
 # run-with-1password.sh — Launch monitoring-stack with secrets from 1Password.
 #
-# Secrets are resolved in-memory by `op run --env-file` and NEVER touch disk.
+# Secrets are resolved in-memory by `op run --env-file` and NEVER touch disk,
+# EXCEPT the K8s kubelet bearer token which is materialized to a tmpfs file
+# (/dev/shm/monitoring-stack/k8s-kubelet-token) so Prometheus can consume it
+# via bearer_token_file.
+#
+# Token file lifecycle:
+#   - Created on "up" commands, persists for the lifetime of the stack.
+#   - Removed on "down" commands, ensuring clean teardown.
+#   - /dev/shm is tmpfs, so the file never survives a reboot.
+#
 # Non-secret static config lives in .env.nonsecret (committed).
 #
 # Usage:
@@ -44,14 +53,10 @@ if [[ ! -f .env.op ]]; then
   exit 1
 fi
 
-# Build the docker compose env-file flags
-COMPOSE_ENV_FLAGS=()
-if [[ -f .env.nonsecret ]]; then
-  COMPOSE_ENV_FLAGS+=(--env-file .env.nonsecret)
-fi
-
-# ── Launch ─────────────────────────────────────────────────────────────────
+# ── Launch via op run ──────────────────────────────────────────────────────
 # op run resolves all op:// refs in .env.op and exports them as env vars.
-# Docker Compose picks them up via ${VAR} interpolation in docker-compose.yml.
-"$OP_BIN" run --env-file=.env.op -- \
-  sudo -E docker compose "${COMPOSE_ENV_FLAGS[@]}" "$@"
+# The inner launcher (_launch-compose.sh):
+#   - "up": materializes K8S_KUBELET_TOKEN to tmpfs, then starts compose
+#   - "down": stops compose, then cleans up the tmpfs token
+#   - other: passes through to docker compose (token file stays if it exists)
+"$OP_BIN" run --env-file=.env.op -- bash scripts/_launch-compose.sh "$@"
