@@ -55,6 +55,7 @@ scrape_configs:
         labels:
           device: truenas
           role: host
+          host: truenas
           arch: bare-metal
 
   # ── paulo-brainz host-level metrics (node_exporter on GPU host) ───────────
@@ -64,6 +65,7 @@ scrape_configs:
         labels:
           device: paulo-brainz
           role: host
+          host: paulo-brainz
           arch: bare-metal
           node: paulo-brainz
 
@@ -74,6 +76,7 @@ scrape_configs:
         labels:
           device: proxmox
           role: hypervisor
+          host: proxmox
           arch: bare-metal
 
   # ── TrueNAS SMART metrics via smartctl_exporter ───────────────────────────
@@ -83,6 +86,7 @@ scrape_configs:
         labels:
           device: truenas
           role: host
+          host: truenas
           arch: bare-metal
 
   # ── Proxmox SMART metrics via smartctl_exporter ─────────────────────────
@@ -92,6 +96,17 @@ scrape_configs:
         labels:
           device: proxmox
           role: hypervisor
+          host: proxmox
+          arch: bare-metal
+
+  # ── paulo-brainz SMART metrics via smartctl_exporter ──────────────────────
+  - job_name: smartctl-paulo-brainz
+    static_configs:
+      - targets: ["10.10.11.5:9633"]
+        labels:
+          device: paulo-brainz
+          role: host
+          host: paulo-brainz
           arch: bare-metal
 
   - job_name: snmp-exporter
@@ -256,62 +271,3 @@ scrape_configs:
         target_label: instance
       - target_label: __address__
         replacement: blackbox-exporter:9115
-
-  # ---- Node Exporter (system metrics) ----
-  - job_name: node-exporter-truenas
-    static_configs:
-      - targets: ["10.10.11.2:9101"]
-        labels:
-          device: truenas
-          role: host
-          host: truenas
-          arch: bare-metal
-
-  - job_name: node-exporter-proxmox
-    static_configs:
-      - targets: ["10.10.11.6:9100"]
-        labels:
-          device: proxmox
-          role: host
-          host: proxmox
-          arch: bare-metal
-
-  - job_name: node-exporter-paulo-brainz
-    static_configs:
-      - targets: ["10.10.11.5:9100"]
-        labels:
-          device: paulo-brainz
-          role: host
-          host: paulo-brainz
-          arch: bare-metal
-
-  # ---- SMART Metrics (smartctl) ----
-  # TrueNAS SMART metrics via smartctl-exporter (Docker on TrueNAS)
-  - job_name: smartctl-truenas
-    static_configs:
-      - targets: ["smartctl-exporter:9633"]
-        labels:
-          device: truenas
-          role: host
-          host: truenas
-          arch: bare-metal
-
-  # Proxmox SMART metrics via smartctl-exporter (systemd on Proxmox)
-  - job_name: smartctl-proxmox
-    static_configs:
-      - targets: ["10.10.11.6:9633"]
-        labels:
-          device: proxmox
-          role: host
-          host: proxmox
-          arch: bare-metal
-
-  # paulo-brainz SMART metrics via smartctl-exporter (systemd on paulo-brainz)
-  - job_name: smartctl-paulo-brainz
-    static_configs:
-      - targets: ["10.10.11.5:9633"]
-        labels:
-          device: paulo-brainz
-          role: host
-          host: paulo-brainz
-          arch: bare-metal
