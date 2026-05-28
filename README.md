@@ -9,6 +9,25 @@ Servicos:
 - cAdvisor: interno na rede Docker (`cadvisor:8080`)
 
 ## Subir stack
+
+### Fluxo preferido: com 1Password (seguro, sem secrets em disco)
+
+```bash
+cd ~/monitoring-stack
+
+# 1) Criar mapeamento local de refs (gitignored):
+cp .env.op.example .env.op
+
+# 2) Subir stack com op run (resolve refs em memoria):
+sudo ./scripts/run-with-1password.sh up -d --build
+
+# incluir o Grafana MCP (opcional):
+sudo ./scripts/run-with-1password.sh --profile mcp up -d --build
+```
+
+### Fluxo legado (direto com docker compose)
+
+Se necessario, pode-se usar docker compose diretamente (requer `.env` com valores reais):
 ```bash
 cd ~/monitoring-stack
 sudo docker compose --env-file .env up -d --build
@@ -16,35 +35,6 @@ sudo docker compose --env-file .env up -d --build
 # incluir o Grafana MCP (opcional)
 sudo docker compose --profile mcp --env-file .env up -d --build
 ```
-
-## Segredos com 1Password (novo fluxo)
-
-Preparacao no TrueNAS (uma vez):
-```bash
-sudo ./scripts/setup_truenas_1password_mcp.sh
-```
-
-1) Criar mapeamento local de refs:
-```bash
-cp .env.op.example .env.op
-```
-
-2) Gerar env de runtime a partir do 1Password:
-```bash
-python3 scripts/render_env_from_1password.py --mapping .env.op --output .env.runtime
-```
-
-3) Subir stack usando env gerado:
-```bash
-sudo docker compose --env-file .env.runtime up -d --build
-
-# incluir o Grafana MCP (opcional)
-sudo docker compose --profile mcp --env-file .env.runtime up -d --build
-```
-
-Observacoes:
-- `.env.op` e `.env.runtime` estao no `.gitignore`.
-- Nao comitar token de Service Account nem valores secretos em plaintext.
 
 ## Grafana MCP (profile `mcp`)
 - O container usa `grafana/mcp-grafana` em modo `streamable-http` com endpoint `/mcp`.
@@ -72,6 +62,13 @@ curl -s http://127.0.0.1:8010/healthz
 - Atualize o target SNMP em `prometheus/prometheus.yml` (job `pfsense-snmp`).
 - Ajuste comunidade/auth SNMP no `snmp-exporter` conforme politica de seguranca.
 - Recomendado SNMPv3 + ACL para IP do TrueNAS.
+- O private key usado por `pfsense-gateway-exporter` e `pfsense-wan-guard`
+  deve ser referenciado em `.env.op` como `PFSENSE_SSH_PRIVATE_KEY` (campo
+  `password` do item `monitoring-env/pfsense_ssh_private_key` no 1Password).
+  O launcher materializa esse
+  valor em `${PFSENSE_SSH_KEY_FILE:-/dev/shm/monitoring-stack/pfsense_monitoring_rsa}`.
+- `secrets/known_hosts` continua sendo o arquivo pinado de host keys e nao deve
+  ser substituido por bypass de verificacao.
 
 ## WAN Guard automatico
 - Container `pfsense-wan-guard` consulta o endpoint Prometheus-compatible do VictoriaMetrics.

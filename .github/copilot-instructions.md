@@ -17,13 +17,12 @@
 ## Build and Test
 - Primary local deploy (TrueNAS):
   - `sudo docker compose --env-file .env up -d --build`
-- 1Password flow (preferred for secrets):
-  - `sudo ./scripts/setup_truenas_1password_mcp.sh`
+- **1Password flow (preferred for secrets):**
   - `cp .env.op.example .env.op`
-  - `python3 scripts/render_env_from_1password.py --mapping .env.op --output .env.runtime`
-  - `sudo docker compose --env-file .env.runtime up -d --build`
+  - `sudo ./scripts/run-with-1password.sh up -d --build` (op run in memory)
+  - **Legacy (deprecated):** `python3 scripts/render_env_from_1password.py --mapping .env.op --output .env.runtime` then `sudo docker compose --env-file .env.runtime up -d --build`
 - Optional next-gen router on TrueNAS:
-  - `sudo docker compose --env-file .env.runtime up -d --build --profile nextgen alert-router`
+  - `sudo ./scripts/run-with-1password.sh --profile nextgen up -d --build alert-router`
 - Health checks:
   - `sudo docker compose ps`
   - `curl -s http://127.0.0.1:9090/-/ready`
