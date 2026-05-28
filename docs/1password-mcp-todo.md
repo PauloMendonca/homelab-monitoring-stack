@@ -1,37 +1,41 @@
-# TODO - Implantacao 1Password MCP
+# TODO - Integração 1Password no Monitoring Stack
 
-## Fase 1 - Preparacao
+## Status Atual
+
+**1Password MCP é agora K8s-nativo** (em `apps/tools/1password-mcp` no GitOps repo).
+
+O TrueNAS monitoring-stack acessa 1Password via `op run --env-file=.env.op` em memória.
+
+## Fase 1 - Preparação (Concluída)
 
 - [x] Definir vault dedicado no 1Password: `MCP API Keys`.
-- [ ] Criar Service Account com acesso minimo ao vault dedicado.
-- [ ] Gerar token da Service Account e armazenar no TrueNAS em `/mnt/pool_fast/db/secrets/1password-mcp/token`.
-- [x] Definir usuario tecnico no TrueNAS: `svc_1password_mcp`.
+- [x] Criar Service Account com acesso minimo ao vault dedicado.
+- [x] Token da Service Account armazenado no TrueNAS em `/mnt/pool_fast/db/secrets/1password-mcp/token`.
+- [x] op CLI instalado no TrueNAS: `/mnt/pool_fast/opencode/bin/op`.
 
-## Fase 2 - Execucao no TrueNAS
+## Fase 2 - Execução no TrueNAS (Concluída)
 
-- [ ] Copiar `scripts/1password-mcp-stdio.sh` para `/opt/homelab/bin/` no TrueNAS.
-- [ ] Garantir permissoes: pasta 0700, token 0600, owner usuario tecnico.
-- [ ] Validar execucao local: `/opt/homelab/bin/1password-mcp-stdio.sh`.
-- [ ] Configurar alias SSH `truenas` no cliente.
+- [x] Script `scripts/run-with-1password.sh` disponível e funcional.
+- [x] Permissões: pasta 0700, token 0600.
+- [x] Validar execução: `sudo ./scripts/run-with-1password.sh config`.
 
-## Fase 3 - Integracao com cliente MCP
+## Fase 3 - Integração com Monitoring Stack (Concluída)
 
-- [ ] Aplicar template `docs/codex-mcp-1password.toml.example` na config do cliente.
-- [ ] Validar `vault_list`.
-- [ ] Validar `password_create` e `password_read` com item de teste.
+- [x] Criar `.env.op` a partir de `.env.op.example` com referencias reais.
+- [x] Subir stack com `sudo ./scripts/run-with-1password.sh up -d --build`.
+- [x] Validar health dos servicos (Prometheus, Alertmanager, Grafana).
 
-## Fase 4 - Migracao dos .env (monitoring-stack)
+## Fase 4 - Fluxo Legado (Opcional, Deprecated)
 
-- [ ] Revisar inventario em `docs/1password-secret-inventory.md`.
-- [ ] Rodar dry-run de import: `python3 scripts/import_env_to_1password.py --env-file .env --vault <vault> --prefix monitoring/env`.
-- [ ] Rodar import com apply apos revisao.
-- [ ] Criar `.env.op` a partir de `.env.op.example` com referencias reais.
-- [ ] Gerar `.env.runtime` com `scripts/render_env_from_1password.py`.
-- [ ] Subir stack com `docker compose --env-file .env.runtime up -d --build`.
+Se necessário usar renderização em arquivo (não recomendado):
 
-## Fase 5 - Pos-migracao
+- [ ] `python3 scripts/render_env_from_1password.py --mapping .env.op --output .env.runtime`
+- [ ] `sudo docker compose --env-file .env.runtime up -d --build`
 
-- [ ] Validar health dos servicos (Prometheus, Alertmanager, Grafana).
-- [ ] Remover segredos plaintext remanescentes dos ambientes locais.
-- [ ] Definir rotina de rotacao (Grafana admin e Evolution API key).
+**Nota:** Prefira `op run` em memória (Fase 3).
+
+## Fase 5 - Rotação de Segredos (Contínua)
+
+- [ ] Definir rotina de rotação (Grafana admin, Evolution API key, etc).
+- [ ] Usar `op item edit` ou `password_update` via 1Password MCP.
 - [ ] Documentar rollback funcional por stack.

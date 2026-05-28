@@ -1,86 +1,76 @@
-# Rollout 1Password MCP no TrueNAS
+# 1Password Integration — TrueNAS Monitoring Stack
 
-Este runbook define como executar o MCP Server do 1Password no TrueNAS para substituir segredos em `.env` por itens no vault dedicado.
+## Status Atual
 
-## Escopo e plataforma
+**1Password MCP é agora K8s-nativo** (em `apps/tools/1password-mcp` no GitOps repo).
 
-- Host: `10.10.11.2` (TrueNAS)
-- Tipo de componente: automacao/secrets helper (nao workload de plataforma K8s)
-- Risco esperado: baixo, sem mudancas de rede ou firewall
+Este documento descreve como o TrueNAS monitoring-stack acessa 1Password para resolver segredos em tempo de execução, **sem SSH relay ou stdio MCP remoto**.
 
-## Pre-requisitos
+## Fluxo Recomendado: `op run` em Memória
 
-1. Vault dedicado criado no 1Password: `MCP API Keys`.
-2. Service Account criada com acesso minimo ao vault dedicado.
-3. Token da Service Account disponivel apenas no TrueNAS.
-4. Node.js 20+ no TrueNAS.
-
-## Estrutura recomendada no TrueNAS
-
-```text
-/mnt/pool_fast/db/secrets/
-  1password-mcp/
-    token            # conteudo: OP_SERVICE_ACCOUNT_TOKEN
-    .env             # opcional: variaveis adicionais de runtime
-```
-
-Permissoes recomendadas:
-
-- pasta: `0700`
-- arquivos: `0600`
-- owner: usuario tecnico dedicado (ex: `svc_1password_mcp`)
-
-## Wrapper de execucao (stdio)
-
-Copiar `scripts/1password-mcp-stdio.sh` para o TrueNAS (ou usar direto do repo) e garantir permissao de execucao.
-
-Comando esperado:
+O TrueNAS executa `op run --env-file=.env.op` para resolver referências `op://` em memória durante o startup do Docker Compose:
 
 ```bash
-/opt/homelab/bin/1password-mcp-stdio.sh
+# 1) Criar mapeamento local (gitignored):
+cp .env.op.example .env.op
+
+# 2) Subir stack com op run (resolve refs em memoria):
+sudo ./scripts/run-with-1password.sh up -d --build
 ```
 
-Esse wrapper:
+**Vantagens:**
+- Nenhum arquivo `.env.runtime` com secrets no disco.
+- Segredos resolvidos apenas em memória do processo.
+- Simples e direto para Docker Compose.
 
-- carrega token de arquivo local protegido
-- nao escreve token em logs
-- inicia `@takescake/1password-mcp@2.4.1` via `npx`
+## Pré-requisitos
 
-## Configuracao do cliente MCP (Codex/CLI)
+1. **op CLI** instalado no TrueNAS: available via PATH (v2.33.0+).
+2. **OP_SERVICE_ACCOUNT_TOKEN** disponível em `/var/lib/homelab/1password/op-service-account-token`.
+3. **Vault** no 1Password: `MCP API Keys` (ID: `yajpg5v7563meqcevu6gsqjsne`).
+4. **Mapeamento** em `.env.op` com referências `op://vault_id/item_id/password`.
 
-Para nao salvar token no cliente, use conexao SSH para iniciar o MCP remotamente no TrueNAS:
+## Estrutura de Segredos no TrueNAS
 
-```toml
-[mcp_servers."1password"]
-command = "ssh"
-args = ["truenas", "/opt/homelab/bin/1password-mcp-stdio.sh"]
+```text
+/var/lib/homelab/1password/
+  op-service-account-token    # OP_SERVICE_ACCOUNT_TOKEN (0600, nao comitar)
 ```
 
-Observacao: o alias `truenas` deve existir em `~/.ssh/config` da maquina cliente.
+## Fluxo Legado (Deprecated): Renderização em Arquivo
 
-## Ondas de migracao sugeridas
+Se necessário, o fluxo antigo ainda funciona:
 
-1. Monitoring stack no TrueNAS (`monitoring-stack/.env`).
-2. Demais stacks Compose do homelab.
-3. Segredos de workloads K8s, mantendo GitOps sem plaintext.
+```bash
+python3 scripts/render_env_from_1password.py --mapping .env.op --output .env.runtime
+sudo docker compose --env-file .env.runtime up -d --build
+```
 
-## Validacao objetiva
+**Desvantagem:** `.env.runtime` fica no disco com secrets em plaintext. Prefira `op run`.
 
-1. MCP responde com `vault_list`.
-2. Criacao de item de teste com `password_create`.
-3. Leitura por `password_read` usando referencia `op://...`.
-4. Rotacao com `password_update`.
-5. Servicos continuam saudaveis apos trocar `.env`.
+## Validação
+
+```bash
+# Testar op run sem subir stack:
+sudo ./scripts/run-with-1password.sh config
+
+# Verificar health apos startup:
+sudo docker compose ps
+curl -s http://127.0.0.1:9090/-/ready
+curl -s http://127.0.0.1:3000/api/health
+```
 
 ## Rollback
 
-1. Manter backup temporario de `.env` fora do Git durante a migracao.
-2. Em falha, restaurar `.env` anterior e reiniciar stack.
-3. Corrigir mapeamento/permissão e repetir a onda.
+1. Restaurar `.env` anterior (backup local).
+2. Reiniciar stack: `sudo docker compose up -d --build`.
+3. Corrigir mapeamento em `.env.op` e repetir.
 
-## Pendencias para concluir
+## Referência: 1Password MCP em K8s
 
-- Token da Service Account ainda pendente (valor nao compartilhado no repo).
-- Vault definido: `MCP API Keys`.
-- Usuario tecnico definido: `svc_1password_mcp`.
-- Caminho do token definido: `/mnt/pool_fast/db/secrets/1password-mcp/token`.
+Para agentes e ferramentas que precisam acessar 1Password via MCP:
+- **Endpoint K8s:** `http://onepassword-mcp.tools.svc.cluster.local:8000/mcp`
+- **Endpoint LiteLLM Gateway:** `http://10.10.11.203:4000/mcp/` (centralizado)
+- **Auth:** Bearer token em K8s secret `1password-mcp-auth` (tools namespace)
+
+Ver `/homelab-1password-secrets` skill para detalhes de criação/rotação de itens.
