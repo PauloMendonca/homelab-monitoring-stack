@@ -3,14 +3,17 @@
 # run-with-1password.sh — Launch monitoring-stack with secrets from 1Password.
 #
 # Secrets are resolved in-memory by `op run --env-file` and NEVER touch disk,
-# EXCEPT the K8s kubelet bearer token which is materialized to a tmpfs file
-# (/dev/shm/monitoring-stack/k8s-kubelet-token) so Prometheus can consume it
-# via bearer_token_file.
+# EXCEPT secrets that must be exposed as files for legacy consumers:
+#   - K8s kubelet bearer token -> tmpfs file so Prometheus can use
+#     bearer_token_file.
+#   - pfSense monitoring SSH private key -> tmpfs file so Docker bind mounts
+#     can pass it to exporter and WAN guard without a long-lived plaintext key
+#     in the repo.
 #
-# Token file lifecycle:
+# Tmpfs file lifecycle:
 #   - Created on "up" commands, persists for the lifetime of the stack.
 #   - Removed on "down" commands, ensuring clean teardown.
-#   - /dev/shm is tmpfs, so the file never survives a reboot.
+#   - /dev/shm is tmpfs, so the files never survive a reboot.
 #
 # Non-secret static config lives in .env.nonsecret (committed).
 #
@@ -24,17 +27,43 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# ── 1Password CLI ──────────────────────────────────────────────────────────
-OP_BIN="${OP_BIN:-/mnt/pool_fast/opencode/bin/op}"
+# ── 1Password CLI / bootstrap paths ────────────────────────────────────────
+HOMELAB_1PASSWORD_ROOT="${HOMELAB_1PASSWORD_ROOT:-/var/lib/homelab/1password}"
+DEFAULT_SA_TOKEN_FILE="${HOMELAB_1PASSWORD_ROOT}/op-service-account-token"
+LEGACY_SA_TOKEN_FILE="/mnt/pool_fast/db/secrets/1password-mcp/token"
+LEGACY_OP_BIN="/mnt/pool_fast/opencode/bin/op"
 
-if [[ ! -x "$OP_BIN" ]]; then
-  echo "ERROR: 1Password CLI not found at $OP_BIN"
-  echo "Set OP_BIN to the correct path or install the op CLI."
+resolve_op_bin() {
+  if [[ -n "${OP_BIN:-}" ]]; then
+    printf '%s\n' "${OP_BIN}"
+    return 0
+  fi
+
+  if command -v op >/dev/null 2>&1; then
+    command -v op
+    return 0
+  fi
+
+  if [[ -x "${LEGACY_OP_BIN}" ]]; then
+    printf '%s\n' "${LEGACY_OP_BIN}"
+    return 0
+  fi
+
+  return 1
+}
+
+if ! OP_BIN="$(resolve_op_bin)"; then
+  echo "ERROR: 1Password CLI not found."
+  echo "Set OP_BIN or install the op CLI."
   exit 1
 fi
 
 # Service Account token (non-interactive auth for automation)
-SA_TOKEN_FILE="${SA_TOKEN_FILE:-/mnt/pool_fast/db/secrets/1password-mcp/token}"
+SA_TOKEN_FILE="${SA_TOKEN_FILE:-${DEFAULT_SA_TOKEN_FILE}}"
+if [[ ! -f "$SA_TOKEN_FILE" && -f "$LEGACY_SA_TOKEN_FILE" ]]; then
+  SA_TOKEN_FILE="$LEGACY_SA_TOKEN_FILE"
+fi
+
 if [[ -z "${OP_SERVICE_ACCOUNT_TOKEN:-}" && -f "$SA_TOKEN_FILE" ]]; then
   export OP_SERVICE_ACCOUNT_TOKEN
   OP_SERVICE_ACCOUNT_TOKEN="$(tr -d '\r\n' < "$SA_TOKEN_FILE")"
@@ -56,7 +85,7 @@ fi
 # ── Launch via op run ──────────────────────────────────────────────────────
 # op run resolves all op:// refs in .env.op and exports them as env vars.
 # The inner launcher (_launch-compose.sh):
-#   - "up": materializes K8S_KUBELET_TOKEN to tmpfs, then starts compose
-#   - "down": stops compose, then cleans up the tmpfs token
+#   - "up": materializes file-backed secrets to tmpfs, then starts compose
+#   - "down": stops compose, then cleans up the tmpfs files
 #   - other: passes through to docker compose (token file stays if it exists)
 "$OP_BIN" run --env-file=.env.op -- bash scripts/_launch-compose.sh "$@"

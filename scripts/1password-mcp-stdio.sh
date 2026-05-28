@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TOKEN_FILE="${TOKEN_FILE:-/mnt/pool_fast/db/secrets/1password-mcp/token}"
+HOMELAB_1PASSWORD_ROOT="${HOMELAB_1PASSWORD_ROOT:-/var/lib/homelab/1password}"
+DEFAULT_TOKEN_FILE="${HOMELAB_1PASSWORD_ROOT}/op-service-account-token"
+LEGACY_TOKEN_FILE="/mnt/pool_fast/db/secrets/1password-mcp/token"
+TOKEN_FILE="${TOKEN_FILE:-${DEFAULT_TOKEN_FILE}}"
+if [[ ! -f "$TOKEN_FILE" && -f "$LEGACY_TOKEN_FILE" ]]; then
+  TOKEN_FILE="$LEGACY_TOKEN_FILE"
+fi
 MCP_PACKAGE="${MCP_PACKAGE:-@takescake/1password-mcp@2.4.1}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 
@@ -30,7 +36,12 @@ fi
 
 DOCKER_CMD=(docker)
 if ! docker info >/dev/null 2>&1; then
-  DOCKER_CMD=(sudo docker)
+  if command -v sudo >/dev/null 2>&1 && sudo -n docker info >/dev/null 2>&1; then
+    DOCKER_CMD=(sudo -n docker)
+  else
+    printf 'Docker is unavailable for the current user. Add the account to the docker group or configure passwordless sudo for docker.\n' >&2
+    exit 1
+  fi
 fi
 
 exec "${DOCKER_CMD[@]}" run --rm -i \
