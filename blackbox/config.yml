@@ -5,6 +5,8 @@ modules:
     http:
       preferred_ip_protocol: ip4
       valid_status_codes: []
+      tls_config:
+        insecure_skip_verify: true
   icmp:
     prober: icmp
     timeout: 3s

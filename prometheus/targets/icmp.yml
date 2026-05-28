@@ -4,3 +4,9 @@
     - 10.10.10.1
   labels:
     group: wan-health
+
+- targets:
+    - 10.10.11.5
+    - 10.10.11.6
+  labels:
+    group: homelab-hosts

@@ -2,3 +2,50 @@
     - http://10.10.11.2
   labels:
     group: local-services
+
+- targets:
+    - https://10.10.11.6:8006
+  labels:
+    group: proxmox-ui
+
+- targets:
+    - http://10.10.11.203:4000/health/readiness
+  labels:
+    group: ai-gateway
+    service: litellm
+    endpoint: litellm-readiness
+
+- targets:
+    - http://10.10.11.206:8000/healthz
+  labels:
+    group: ai-mcp-critical
+    service: chrome-devtools-mcp
+    endpoint: healthz
+
+- targets:
+    - http://10.10.11.208:8000/healthz
+  labels:
+    group: ai-mcp-critical
+    service: google-drive-mcp
+    endpoint: healthz
+
+- targets:
+    - http://10.10.11.209:8000/healthz
+  labels:
+    group: ai-mcp-critical
+    service: pdf-reader-mcp
+    endpoint: healthz
+
+- targets:
+    - http://10.10.11.210:8000/healthz
+  labels:
+    group: ai-mcp-critical
+    service: knowledge-mcp
+    endpoint: healthz
+
+- targets:
+    - http://10.10.11.2:8010/healthz
+  labels:
+    group: ai-mcp-critical
+    service: grafana-mcp
+    endpoint: healthz
