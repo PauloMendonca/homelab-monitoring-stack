@@ -20,15 +20,28 @@ Este runbook padroniza o deploy do `mcp-grafana` no homelab com foco em baixo ri
    - `org_id` (ex.: `1`)
    - `url` (ex.: `http://grafana:3000`)
 
-## Deploy
+## Deploy (Fluxo Recomendado: `op run`)
 
 No TrueNAS, dentro do repo `monitoring-stack`:
 
 ```bash
+# 1) Criar mapeamento local (gitignored):
 cp .env.op.example .env.op
+
+# 2) Subir stack com profile mcp usando op run:
+sudo ./scripts/run-with-1password.sh --profile mcp up -d --build
+```
+
+## Deploy (Fluxo Legado: Renderização em Arquivo)
+
+Se necessário usar o fluxo antigo:
+
+```bash
 python3 scripts/render_env_from_1password.py --mapping .env.op --output .env.runtime
 sudo docker compose --profile mcp --env-file .env.runtime up -d --build
 ```
+
+**Nota:** Prefira `op run` em memória (fluxo recomendado acima).
 
 ## Validacao objetiva
 
@@ -68,6 +81,6 @@ Exemplo de servidor remoto no `opencode.json`:
 ## Rollback
 
 ```bash
-sudo docker compose --profile mcp --env-file .env.runtime stop grafana-mcp
-sudo docker compose --profile mcp --env-file .env.runtime rm -f grafana-mcp
+sudo docker compose --profile mcp stop grafana-mcp
+sudo docker compose --profile mcp rm -f grafana-mcp
 ```
